@@ -1,11 +1,17 @@
+import asyncio
+import sys
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.configuration.application_factory import create_app
 from app.configuration.settings import Settings
 from tests.config import IntegrationTestSettings
+
+# На Windows psycopg async требует SelectorEventLoop вместо ProactorEventLoop
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 @pytest.fixture(scope="session")
@@ -17,42 +23,27 @@ def test_settings() -> IntegrationTestSettings:
 def app(test_settings):
     settings = Settings(
         database_url=test_settings.database_url.get_secret_value(),
-        db_user="test",
-        db_password="test",
+        db_user="web_llm_test",
+        db_password="web_llm_test",
         db_name="web_llm_test",
         db_host="localhost",
-        db_port=5432,
+        db_port=55433,
     )
     application = create_app(settings)
     yield application
-    application.state.db_manager.dispose()
 
 
 @pytest.fixture(scope="function")
-def db_session(app):
-    """Создаёт сессию с откатом транзакции после каждого теста."""
-    engine = app.state.db_manager.engine
-    connection = engine.connect()
-    transaction = connection.begin()
-    session_factory = sessionmaker(bind=connection)
-    session = session_factory()
-
-    yield session
-
-    session.close()
-    transaction.rollback()
-    connection.close()
+async def db_session(app) -> AsyncSession:
+    """Создаёт асинхронную сессию с откатом транзакции после каждого теста."""
+    async with app.state.db_manager.get_session() as session:
+        async with session.begin():
+            yield session
+            await session.rollback()
 
 
 @pytest.fixture(scope="function")
-def client(app, db_session):
-    """HTTP-клиент с подменой сессии БД на тестовую."""
-    from app.presentation_layer.routers.user_router import get_db
-
-    def override_get_db():
-        yield db_session
-
-    app.dependency_overrides[get_db] = override_get_db
+def client(app):
+    """HTTP-клиент для тестирования API."""
     with TestClient(app) as c:
         yield c
-    app.dependency_overrides.clear()

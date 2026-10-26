@@ -1,17 +1,16 @@
-from typing import Final
-
+import pytest
 from fastapi import status
 
 from tests.resources.test_users import TEST_USER_1, TEST_USER_2
 
-ID_KEY: Final = "id"
-USERNAME_KEY: Final = "username"
-EMAIL_KEY: Final = "email"
-PASSWORD_KEY: Final = "password"
-DETAIL_KEY: Final = "detail"
+ID_KEY = "id"
+USERNAME_KEY = "username"
+EMAIL_KEY = "email"
+PASSWORD_KEY = "password"
+DETAIL_KEY = "detail"
 
-REGISTER_PATH: Final = "/user/register"
-LOGIN_PATH: Final = "/user/login"
+REGISTER_PATH = "/user/register"
+LOGIN_PATH = "/user/login"
 
 
 class TestRegisterUser:

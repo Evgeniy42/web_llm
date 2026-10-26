@@ -1,5 +1,6 @@
 from advanced_alchemy.exceptions import NotFoundError
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.across_layers.entities.user_entity import UserEntity
 from app.application_layer.contracts import UserRepositoryProtocol
@@ -13,9 +14,15 @@ class UserRepository(
     model_type = UserModel
     count_with_window_function = False
 
+    def __init__(self, session: AsyncSession) -> None:
+        super().__init__(session=session, auto_commit=True)
+
     async def get_user_by_email(self, email: str) -> UserEntity | None:
         model = await self.get_one_or_none(email=email)
         return user_model_to_entity(model) if model else None
+
+    async def get_user_model_by_email(self, email: str) -> UserModel | None:
+        return await self.get_one_or_none(email=email)
 
     async def get_user_by_id(self, user_id: int) -> UserEntity | None:
         model = await self.get_one_or_none(id=user_id)

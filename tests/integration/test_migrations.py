@@ -13,8 +13,8 @@ def test_settings():
 
 def _run_flyway(settings: IntegrationTestSettings) -> subprocess.CompletedProcess:
     url = settings.database_url.get_secret_value()
-    # postgresql+psycopg://user:pass@host:port/db → jdbc:postgresql://host:port/db
-    jdbc_url = url.replace("postgresql+psycopg://", "jdbc:postgresql://")
+    # postgresql+psycopg_async://user:pass@host:port/db → jdbc:postgresql://host:port/db
+    jdbc_url = url.replace("postgresql+psycopg_async://", "jdbc:postgresql://")
     # убираем credentials из URL
     parts = jdbc_url.split("@")
     if len(parts) == 2:

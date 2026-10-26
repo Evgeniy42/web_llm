@@ -20,6 +20,6 @@ class IntegrationTestSettings(BaseSettings):
     @classmethod
     def require_test_postgresql(cls, value: SecretStr) -> SecretStr:
         url = make_url(value.get_secret_value())
-        if url.drivername != "postgresql+psycopg" or not (url.database or "").endswith("_test"):
+        if url.drivername not in ("postgresql+psycopg", "postgresql+psycopg_async") or not (url.database or "").endswith("_test"):
             raise ValueError("A dedicated PostgreSQL database ending in _test is required")
         return value

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 router = APIRouter()
 
@@ -11,11 +12,11 @@ def health():
 
 
 @router.get("/health/ready")
-def health_ready(request: Request):
+async def health_ready(request: Request):
     """Проверка готовности: доступность PostgreSQL."""
     try:
-        with request.app.state.db_manager.engine.connect() as conn:
-            conn.execute(__import__("sqlalchemy").text("SELECT 1"))
+        async with request.app.state.db_manager.engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
         return {"status": "ready"}
     except Exception:
         return JSONResponse(

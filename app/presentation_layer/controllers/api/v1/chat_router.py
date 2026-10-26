@@ -13,4 +13,4 @@ router = APIRouter(
 @router.post("/send", response_model=ChatResponseDTO, status_code=status.HTTP_200_OK)
 async def send_message(request: ChatRequestDTO, service: FromDishka[ChatService]):
     response_text = await service.send_message(request.message)
-    return ChatResponseDTO.model_validate(response_text)
+    return ChatResponseDTO(response=response_text)

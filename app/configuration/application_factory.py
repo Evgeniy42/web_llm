@@ -1,8 +1,9 @@
 import logging
 import subprocess
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from dishka import make_container
+from dishka import make_async_container
 from dishka.integrations.fastapi import setup_dishka
 from fastapi import FastAPI
 from sqlalchemy import text
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 def run_migrations(settings: Settings) -> None:
     """Запускает Flyway-миграции через flyway CLI."""
+    # Определяем путь к миграциям относительно корня проекта
+    project_root = Path(__file__).resolve().parents[2]
+    migrations_path = project_root / "app" / "migrations" / "sql"
+
     result = subprocess.run(
         [
             "flyway",
@@ -24,7 +29,7 @@ def run_migrations(settings: Settings) -> None:
             f"-url=jdbc:postgresql://{settings.db_host}:{settings.db_port}/{settings.db_name}",
             f"-user={settings.db_user}",
             f"-password={settings.db_password}",
-            "-locations=filesystem:/app/app/migrations/sql",
+            f"-locations=filesystem:{migrations_path}",
         ],
         capture_output=True,
         text=True,
@@ -42,12 +47,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
-            run_migrations(settings)
-            with db_manager.engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
+            # Пропускаем миграции в тестовом режиме
+            if not settings.db_name.endswith("_test"):
+                run_migrations(settings)
+            async with db_manager.engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
             yield
         finally:
-            db_manager.dispose()
+            await db_manager.dispose()
 
     app = FastAPI(title="Web LLM", lifespan=lifespan)
     app.state.settings = settings
@@ -55,7 +62,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     setup_exception_handlers(app)
 
-    container = make_container(AppProvider())
+    container = make_async_container(AppProvider())
     setup_dishka(container, app)
 
     from app.presentation_layer.controllers.api.v1.chat_router import router as chat_router

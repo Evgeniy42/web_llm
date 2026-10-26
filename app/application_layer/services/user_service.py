@@ -21,22 +21,22 @@ class InvalidCredentialsError(Exception):
 class UserService:
     repository: UserRepositoryProtocol
 
-    def get_user_by_id(self, user_id: int) -> UserEntity | None:
-        return self.repository.get_user_by_id(user_id)
+    async def get_user_by_id(self, user_id: int) -> UserEntity | None:
+        return await self.repository.get_user_by_id(user_id)
 
-    def register_user(self, username: str, email: str, password: str) -> UserEntity:
-        if self.repository.get_user_by_email(email):
+    async def register_user(self, username: str, email: str, password: str) -> UserEntity:
+        if await self.repository.get_user_by_email(email):
             raise UserAlreadyExistsError("Пользователь с таким email уже существует!")
 
         hashed = hash_password(password)
-        return self.repository.create_user(
+        return await self.repository.create_user(
             username=username,
             email=email,
             password=hashed,
         )
 
-    def login_user(self, email: str, password: str) -> UserEntity:
-        user_with_password = self.repository.get_user_model_by_email(email)
+    async def login_user(self, email: str, password: str) -> UserEntity:
+        user_with_password = await self.repository.get_user_model_by_email(email)
         if not user_with_password:
             raise InvalidCredentialsError("Неправильный пароль или логин!")
 

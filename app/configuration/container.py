@@ -1,7 +1,7 @@
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 
 from dishka import Provider, Scope, provide
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application_layer.services.chat_service import ChatService
 from app.application_layer.services.user_service import UserService
@@ -23,15 +23,12 @@ class AppProvider(Provider):
         return DatabaseManager(settings.database_url)
 
     @provide
-    def db_session(self, db_manager: DatabaseManager) -> Iterator[Session]:
-        session = db_manager.get_session()
-        try:
+    async def db_session(self, db_manager: DatabaseManager) -> AsyncIterator[AsyncSession]:
+        async with db_manager.get_session() as session:
             yield session
-        finally:
-            session.close()
 
     @provide
-    def user_repository(self, session: Session) -> UserRepository:
+    def user_repository(self, session: AsyncSession) -> UserRepository:
         return UserRepository(session)
 
     @provide
