@@ -1,23 +1,15 @@
-from contextlib import asynccontextmanager
+import uvicorn
 
-from fastapi import FastAPI
+from app.configuration.application_factory import create_app
+from app.configuration.settings import Settings
 
-from app.configuration.database import engine
+app = create_app()
 
-from app.presentation_layer.routers import HealthRouter, UserRouter
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # startup: проверяем подключение к БД
-    with engine.connect() as conn:
-        pass
-    yield
-    # shutdown: закрываем пул соединений
-    engine.dispose()
-
-
-app = FastAPI(title="Web LLM", lifespan=lifespan)
-
-app.include_router(HealthRouter)
-app.include_router(UserRouter)
+if __name__ == "__main__":
+    settings = Settings()
+    uvicorn.run(
+        "main:app",
+        host=settings.api_host,
+        port=settings.api_port,
+        reload=True,
+    )

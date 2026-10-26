@@ -1,5 +1,5 @@
-from sqlalchemy.orm import DeclarativeBase
+from advanced_alchemy.base import DefaultBase
 
 
-class Base(DeclarativeBase):
-    pass
+class BaseORMModel(DefaultBase):
+    __abstract__ = True

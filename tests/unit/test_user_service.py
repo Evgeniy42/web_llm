@@ -2,82 +2,101 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.application_layers.services.UserService import UserService
-
-
-@pytest.fixture
-def mock_db():
-    return Mock()
+from app.across_layers.entities.user_entity import UserEntity
+from app.application_layer.contracts.user_repository_protocol import UserRepositoryProtocol
+from app.application_layer.services.user_service import (
+    InvalidCredentialsError,
+    UserAlreadyExistsError,
+    UserService,
+)
 
 
 @pytest.fixture
 def mock_repo():
-    repo = Mock()
-    return repo
+    return Mock(spec=UserRepositoryProtocol)
 
 
 @pytest.fixture
-def user_service(mock_db, mock_repo):
-    service = UserService(mock_db)
-    service.user_repository = mock_repo
-    return service
+def user_service(mock_repo):
+    return UserService(repository=mock_repo)
+
+
+@pytest.fixture
+def user_entity():
+    return UserEntity(id=1, username="testuser", email="test@example.com")
 
 
 class TestGetUserById:
-    def test_returns_user_when_exists(self, user_service, mock_repo):
-        # Arrange
-        mock_user = Mock(id=1, username="test", email="test@example.com")
-        mock_repo.get_user_by_id.return_value = mock_user
+    def test_returns_user_when_exists(self, user_service, mock_repo, user_entity):
+        mock_repo.get_user_by_id.return_value = user_entity
 
-        # Act
         result = user_service.get_user_by_id(1)
 
-        # Assert
-        assert result == mock_user
+        assert result == user_entity
         mock_repo.get_user_by_id.assert_called_once_with(1)
 
     def test_returns_none_when_not_exists(self, user_service, mock_repo):
-        # Arrange
         mock_repo.get_user_by_id.return_value = None
 
-        # Act
         result = user_service.get_user_by_id(999)
 
-        # Assert
         assert result is None
 
 
 class TestRegisterUser:
-    def test_returns_error_when_email_exists(self, user_service, mock_repo):
-        # Arrange
+    def test_raises_error_when_email_exists(self, user_service, mock_repo):
         mock_repo.get_user_by_email.return_value = Mock()
 
-        # Act
-        user, error = user_service.register_user(
-            username="new",
-            email="existing@example.com",
-            password="password123"
-        )
+        with pytest.raises(UserAlreadyExistsError, match="email"):
+            user_service.register_user("new", "existing@example.com", "password123")
 
-        # Assert
-        assert user is None
-        assert error == "Пользователь с таким email уже существует!"
-
-    def test_creates_user_with_hashed_password(self, user_service, mock_repo):
-        # Arrange
+    def test_creates_user_with_hashed_password(self, user_service, mock_repo, user_entity):
         mock_repo.get_user_by_email.return_value = None
-        mock_repo.create_user.return_value = Mock(id=1, username="new")
+        mock_repo.create_user.return_value = user_entity
 
-        # Act
-        user, error = user_service.register_user(
-            username="new",
-            email="new@example.com",
-            password="password123"
-        )
+        result = user_service.register_user("testuser", "test@example.com", "password123")
 
-        # Assert
-        assert error is None
-        assert user is not None
+        assert result == user_entity
         mock_repo.create_user.assert_called_once()
         call_kwargs = mock_repo.create_user.call_args[1]
-        assert call_kwargs["password"] != "password123"  # пароль захеширован
+        assert call_kwargs["password"] != "password123"
+
+
+class TestLoginUser:
+    def test_login_success(self, user_service, mock_repo):
+        from app.data_access_layer.models.user_model import UserModel
+        mock_model = Mock(spec=UserModel)
+        mock_model.id = 1
+        mock_model.username = "testuser"
+        mock_model.email = "test@example.com"
+        mock_model.password = "$2b$12$hashedpassword"
+        mock_repo.get_user_model_by_email.return_value = mock_model
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "app.application_layer.services.user_service.verify_password",
+                lambda p, h: True,
+            )
+            result = user_service.login_user("test@example.com", "password123")
+
+        assert result.id == 1
+        assert result.username == "testuser"
+
+    def test_login_user_not_found(self, user_service, mock_repo):
+        mock_repo.get_user_model_by_email.return_value = None
+
+        with pytest.raises(InvalidCredentialsError):
+            user_service.login_user("nonexistent@example.com", "password123")
+
+    def test_login_wrong_password(self, user_service, mock_repo):
+        mock_model = Mock()
+        mock_model.password = "$2b$12$hashedpassword"
+        mock_repo.get_user_model_by_email.return_value = mock_model
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "app.application_layer.services.user_service.verify_password",
+                lambda p, h: False,
+            )
+            with pytest.raises(InvalidCredentialsError):
+                user_service.login_user("test@example.com", "wrongpassword")

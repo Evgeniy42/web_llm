@@ -1,137 +1,106 @@
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from typing import Final
 
-from main import app
-from app.configuration.database import get_db
-from app.data_access_layer.models.base import Base
-from app.data_access_layer.models.UserModel import User
+from fastapi import status
 
+from tests.resources.test_users import TEST_USER_1, TEST_USER_2
 
-# SQLite in-memory для тестов
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
+ID_KEY: Final = "id"
+USERNAME_KEY: Final = "username"
+EMAIL_KEY: Final = "email"
+PASSWORD_KEY: Final = "password"
+DETAIL_KEY: Final = "detail"
 
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+REGISTER_PATH: Final = "/user/register"
+LOGIN_PATH: Final = "/user/login"
 
 
-@pytest.fixture
-def db_session():
-    Base.metadata.create_all(bind=engine)
-    session = TestingSessionLocal()
-    yield session
-    session.close()
-    Base.metadata.drop_all(bind=engine)
-
-
-@pytest.fixture
-def client(db_session):
-    def override_get_db():
-        try:
-            yield db_session
-        finally:
-            db_session.close()
-
-    app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
-        yield c
-    app.dependency_overrides.clear()
-
-
-class TestUserEndpoints:
+class TestRegisterUser:
     def test_register_user_success(self, client):
-        # Act
-        response = client.post("/user/register", json={
-            "username": "testuser",
-            "email": "test@example.com",
-            "password": "password123"
-        })
+        response = client.post(REGISTER_PATH, json=TEST_USER_1)
 
-        # Assert
-        assert response.status_code == 200
+        assert response.status_code == status.HTTP_201_CREATED
         data = response.json()
-        assert data["username"] == "testuser"
-        assert data["email"] == "test@example.com"
-        assert "password" not in data
+        assert data[USERNAME_KEY] == TEST_USER_1[USERNAME_KEY]
+        assert data[EMAIL_KEY] == TEST_USER_1[EMAIL_KEY]
+        assert PASSWORD_KEY not in data
 
     def test_register_duplicate_email(self, client):
-        # Arrange
-        client.post("/user/register", json={
-            "username": "user1",
-            "email": "duplicate@example.com",
-            "password": "password123"
-        })
+        client.post(REGISTER_PATH, json=TEST_USER_1)
+        duplicate = {**TEST_USER_2, EMAIL_KEY: TEST_USER_1[EMAIL_KEY]}
 
-        # Act
-        response = client.post("/user/register", json={
-            "username": "user2",
-            "email": "duplicate@example.com",
-            "password": "password123"
-        })
+        response = client.post(REGISTER_PATH, json=duplicate)
 
-        # Assert
-        assert response.status_code == 400
+        assert response.status_code == status.HTTP_409_CONFLICT
 
+    def test_register_duplicate_username_allowed(self, client):
+        client.post(REGISTER_PATH, json=TEST_USER_1)
+        duplicate = {**TEST_USER_2, USERNAME_KEY: TEST_USER_1[USERNAME_KEY]}
+
+        response = client.post(REGISTER_PATH, json=duplicate)
+
+        assert response.status_code == status.HTTP_201_CREATED
+
+    def test_register_password_too_long(self, client):
+        long_password = "я" * 40  # 80 байт в UTF-8, превышает лимит bcrypt 72 байт
+        payload = {**TEST_USER_1, PASSWORD_KEY: long_password}
+
+        response = client.post(REGISTER_PATH, json=payload)
+
+        assert response.status_code in (
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
+    def test_register_invalid_email(self, client):
+        payload = {**TEST_USER_1, EMAIL_KEY: "not-an-email"}
+
+        response = client.post(REGISTER_PATH, json=payload)
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+class TestLoginUser:
     def test_login_success(self, client):
-        # Arrange
-        client.post("/user/register", json={
-            "username": "loginuser",
-            "email": "login@example.com",
-            "password": "password123"
+        client.post(REGISTER_PATH, json=TEST_USER_1)
+
+        response = client.post(LOGIN_PATH, json={
+            EMAIL_KEY: TEST_USER_1[EMAIL_KEY],
+            PASSWORD_KEY: TEST_USER_1[PASSWORD_KEY],
         })
 
-        # Act
-        response = client.post("/user/login", json={
-            "email": "login@example.com",
-            "password": "password123"
-        })
-
-        # Assert
-        assert response.status_code == 200
-        assert response.json()["email"] == "login@example.com"
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()[EMAIL_KEY] == TEST_USER_1[EMAIL_KEY]
 
     def test_login_wrong_password(self, client):
-        # Arrange
-        client.post("/user/register", json={
-            "username": "wrongpass",
-            "email": "wrong@example.com",
-            "password": "password123"
+        client.post(REGISTER_PATH, json=TEST_USER_1)
+
+        response = client.post(LOGIN_PATH, json={
+            EMAIL_KEY: TEST_USER_1[EMAIL_KEY],
+            PASSWORD_KEY: "wrongpassword",
         })
 
-        # Act
-        response = client.post("/user/login", json={
-            "email": "wrong@example.com",
-            "password": "wrongpassword"
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_login_user_not_found(self, client):
+        response = client.post(LOGIN_PATH, json={
+            EMAIL_KEY: "nonexistent@example.com",
+            PASSWORD_KEY: "password123",
         })
 
-        # Assert
-        assert response.status_code == 401
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
+
+class TestGetUserById:
     def test_get_user_by_id(self, client):
-        # Arrange
-        register_response = client.post("/user/register", json={
-            "username": "getbyid",
-            "email": "getbyid@example.com",
-            "password": "password123"
-        })
-        user_id = register_response.json()["id"]
+        register_response = client.post(REGISTER_PATH, json=TEST_USER_1)
+        user_id = register_response.json()[ID_KEY]
 
-        # Act
         response = client.get(f"/user/{user_id}")
 
-        # Assert
-        assert response.status_code == 200
-        assert response.json()["username"] == "getbyid"
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()[USERNAME_KEY] == TEST_USER_1[USERNAME_KEY]
 
     def test_get_user_not_found(self, client):
-        # Act
-        response = client.get("/user/999")
+        response = client.get("/user/999999")
 
-        # Assert
-        assert response.status_code == 404
+        assert response.status_code == status.HTTP_404_NOT_FOUND
