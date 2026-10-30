@@ -41,3 +41,13 @@ htmlcov/
 # Ruff / mypy
 .ruff_cache/
 .mypy_cache/
+
+# Frontend
+frontend/web-llm/node_modules/
+frontend/web-llm/dist/
+frontend/web-llm/dist-ssr/
+frontend/web-llm/*.local
+frontend/web-llm/.vite/
+
+# agent
+.agents

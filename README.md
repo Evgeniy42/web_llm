@@ -8,6 +8,7 @@
 - **База данных:** PostgreSQL 16
 - **Миграции:** Flyway
 - **CI/CD:** Docker Compose
+- **Frontend** React
 
 ## Быстрый старт
 

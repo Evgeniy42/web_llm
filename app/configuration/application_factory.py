@@ -1,5 +1,6 @@
 import logging
 import subprocess
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -22,9 +23,10 @@ def run_migrations(settings: Settings) -> None:
     project_root = Path(__file__).resolve().parents[2]
     migrations_path = project_root / "app" / "migrations" / "sql"
 
+    flyway_cmd = "flyway.cmd" if sys.platform == "win32" else "flyway"
     result = subprocess.run(
         [
-            "flyway",
+            flyway_cmd,
             "migrate",
             f"-url=jdbc:postgresql://{settings.db_host}:{settings.db_port}/{settings.db_name}",
             f"-user={settings.db_user}",
@@ -65,12 +67,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     container = make_async_container(AppProvider())
     setup_dishka(container, app)
 
-    from app.presentation_layer.controllers.api.v1.chat_router import router as chat_router
-    from app.presentation_layer.controllers.api.v1.user_router import router as user_router
-    from app.presentation_layer.controllers.health import router as health_router
+    from app.presentation_layer.controllers import router
 
-    app.include_router(health_router)
-    app.include_router(user_router)
-    app.include_router(chat_router)
+    app.include_router(router)
 
     return app
