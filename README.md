@@ -10,6 +10,9 @@
 - **CI/CD:** Docker Compose
 - **Frontend** React
 
+## Frontend часть
+Расположена в репозитории https://github.com/Evgeniy42/web_llm_frontend
+
 ## Быстрый старт
 
 ### 1. Клонирование и установка
