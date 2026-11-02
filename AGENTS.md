@@ -34,6 +34,16 @@ Frontend: React-приложение для веб-интерфейса чата
 - UserService — регистрация, вход, получение пользователя
 - ChatService — отправка сообщений (MockLLM с 10 случайными ответами)
 
+### Тесты (`tests/`)
+- `unit/` — юнит-тесты без внешних зависимостей; структура повторяет слои приложения:
+  `application_layer/`, `configuration/` (async-тесты, `asyncio_mode = "auto"`)
+- `integration/` — тесты с настоящей PostgreSQL (только через `docker-compose.test.yml`);
+  структура по слоям: `presentation_layer/`, `data_access_layer/`, `migrations/`;
+  приложение создаётся штатной `create_app` из `app/configuration`, параметры БД — из `TEST_DATABASE_URL`
+- `resources/` — общие тестовые данные и константы: `api.py` (пути и ключи JSON),
+  `users.py` (пользователи и payload-конструкторы), `mocks.py` (моки и фабрики для unit-тестов).
+  Повторяющиеся значения хранятся здесь, а не в тестах
+
 ### Скрипты frontend
 - `npm run dev` — запуск dev-сервера Vite
 - `npm run build` — сборка для продакшена

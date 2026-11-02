@@ -1,44 +1,23 @@
-import subprocess
-
-import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
 from tests.config import IntegrationTestSettings
+from tests.integration.conftest import run_flyway
 
 
-@pytest.fixture(scope="module")
-def test_settings():
-    return IntegrationTestSettings()
-
-
-def _run_flyway(settings: IntegrationTestSettings) -> subprocess.CompletedProcess:
-    url = settings.database_url.get_secret_value()
-    # postgresql+psycopg_async://user:pass@host:port/db → jdbc:postgresql://host:port/db
-    jdbc_url = url.replace("postgresql+psycopg_async://", "jdbc:postgresql://")
-    # убираем credentials из URL
-    parts = jdbc_url.split("@")
-    if len(parts) == 2:
-        jdbc_url = "jdbc:postgresql://" + parts[1]
-
-    return subprocess.run(
-        [
-            "flyway", "migrate",
-            f"-url={jdbc_url}",
-            "-user=web_llm_test",
-            "-password=web_llm_test",
-            "-locations=filesystem:./app/migrations/sql",
-        ],
-        capture_output=True,
-        text=True,
-    )
+def _sync_engine(test_settings: IntegrationTestSettings):
+    """Синхронный engine: драйвер psycopg_async заменяется на синхронный psycopg."""
+    url = make_url(test_settings.database_url.get_secret_value())
+    sync_url = url.set(drivername="postgresql+psycopg").render_as_string(hide_password=False)
+    return create_engine(sync_url)
 
 
 class TestMigrations:
     def test_flyway_creates_schema(self, test_settings):
-        result = _run_flyway(test_settings)
+        result = run_flyway(test_settings)
         assert result.returncode == 0, f"Flyway failed: {result.stderr or result.stdout}"
 
-        engine = create_engine(test_settings.database_url.get_secret_value())
+        engine = _sync_engine(test_settings)
         with engine.connect() as conn:
             result = conn.execute(text(
                 "SELECT table_name FROM information_schema.tables WHERE table_schema='public'"
@@ -50,11 +29,11 @@ class TestMigrations:
 
     def test_flyway_idempotent(self, test_settings):
         """Повторный запуск flyway не должен падать."""
-        result = _run_flyway(test_settings)
+        result = run_flyway(test_settings)
         assert result.returncode == 0
 
     def test_user_table_columns(self, test_settings):
-        engine = create_engine(test_settings.database_url.get_secret_value())
+        engine = _sync_engine(test_settings)
         with engine.connect() as conn:
             result = conn.execute(text(
                 "SELECT column_name, data_type, character_maximum_length, is_nullable "
@@ -74,7 +53,7 @@ class TestMigrations:
         engine.dispose()
 
     def test_user_table_unique_constraints(self, test_settings):
-        engine = create_engine(test_settings.database_url.get_secret_value())
+        engine = _sync_engine(test_settings)
         with engine.connect() as conn:
             result = conn.execute(text(
                 "SELECT indexname FROM pg_indexes WHERE tablename='user'"

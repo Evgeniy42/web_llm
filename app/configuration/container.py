@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.application_layer.services.chat_service import ChatService
 from app.application_layer.services.user_service import UserService
 from app.configuration.database import DatabaseManager
-from app.configuration.settings import Settings
 from app.data_access_layer.repositories.mock_llm import MockLLM
 from app.data_access_layer.repositories.user_repository import UserRepository
 
@@ -14,18 +13,19 @@ from app.data_access_layer.repositories.user_repository import UserRepository
 class AppProvider(Provider):
     scope = Scope.REQUEST
 
-    @provide(scope=Scope.APP)
-    def settings(self) -> Settings:
-        return Settings()
-
-    @provide(scope=Scope.APP)
-    def db_manager(self, settings: Settings) -> DatabaseManager:
-        return DatabaseManager(settings.database_url)
+    # Settings и DatabaseManager поставляются в контейнер через context
+    # из app.configuration.application_factory.create_app
 
     @provide
     async def db_session(self, db_manager: DatabaseManager) -> AsyncIterator[AsyncSession]:
         async with db_manager.get_session() as session:
-            yield session
+            try:
+                yield session
+            except Exception:
+                await session.rollback()
+                raise
+            else:
+                await session.commit()
 
     @provide
     def user_repository(self, session: AsyncSession) -> UserRepository:

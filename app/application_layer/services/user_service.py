@@ -21,10 +21,37 @@ class InvalidCredentialsError(Exception):
 class UserService:
     repository: UserRepositoryProtocol
 
-    async def get_user_by_id(self, user_id: int) -> UserEntity | None:
-        return await self.repository.get_user_by_id(user_id)
+    async def get_user_by_id(self, user_id: int) -> UserEntity:
+        """Возвращает пользователя по идентификатору.
+
+        Args:
+            user_id: идентификатор пользователя.
+
+        Returns:
+            Найденный пользователь.
+
+        Raises:
+            UserNotFoundError: пользователь с таким идентификатором не найден.
+        """
+        user = await self.repository.get_user_by_id(user_id)
+        if user is None:
+            raise UserNotFoundError("Пользователь не найден!")
+        return user
 
     async def register_user(self, username: str, email: str, password: str) -> UserEntity:
+        """Регистрирует нового пользователя.
+
+        Args:
+            username: отображаемое имя пользователя.
+            email: адрес электронной почты, используется как логин.
+            password: пароль в открытом виде, хешируется перед сохранением.
+
+        Returns:
+            Созданный пользователь.
+
+        Raises:
+            UserAlreadyExistsError: пользователь с таким email уже существует.
+        """
         if await self.repository.get_user_by_email(email):
             raise UserAlreadyExistsError("Пользователь с таким email уже существует!")
 
@@ -36,6 +63,18 @@ class UserService:
         )
 
     async def login_user(self, email: str, password: str) -> UserEntity:
+        """Проверяет учётные данные и возвращает пользователя при успешном входе.
+
+        Args:
+            email: адрес электронной почты, указанный при регистрации.
+            password: пароль в открытом виде для сверки с хешем.
+
+        Returns:
+            Пользователь, прошедший проверку учётных данных.
+
+        Raises:
+            InvalidCredentialsError: пользователь не найден или пароль не совпал.
+        """
         user_with_password = await self.repository.get_user_model_by_email(email)
         if not user_with_password:
             raise InvalidCredentialsError("Неправильный пароль или логин!")

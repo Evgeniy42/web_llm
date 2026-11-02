@@ -14,7 +14,6 @@ from app.presentation_layer.dto.user_dto import (
 )
 
 router = APIRouter(
-    prefix="/user",
     tags=["user"],
     route_class=DishkaRoute
 )
@@ -25,6 +24,14 @@ async def register(
     request: UserRegisterRequestDTO,
     service: FromDishka[UserService],
 ):
+    """Регистрирует нового пользователя.
+
+    Args:
+        request: данные регистрации — имя, email и пароль.
+
+    Returns:
+        Данные созданного пользователя. При занятом email — 409 Conflict.
+    """
     try:
         user = await service.register_user(
             username=request.username,
@@ -45,6 +52,14 @@ async def login(
     request: UserLoginRequestDTO,
     service: FromDishka[UserService],
 ):
+    """Выполняет вход пользователя по email и паролю.
+
+    Args:
+        request: учётные данные — email и пароль.
+
+    Returns:
+        Данные пользователя. При неверной паре email/пароль — 401 Unauthorized.
+    """
     try:
         user = await service.login_user(
             email=request.email,
@@ -64,6 +79,14 @@ async def get_user_by_id(
     user_id: int,
     service: FromDishka[UserService],
 ):
+    """Возвращает пользователя по идентификатору.
+
+    Args:
+        user_id: идентификатор пользователя.
+
+    Returns:
+        Данные пользователя. Если пользователь не найден — 404 Not Found.
+    """
     try:
         user = await service.get_user_by_id(user_id)
 

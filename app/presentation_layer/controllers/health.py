@@ -7,13 +7,22 @@ router = APIRouter()
 
 @router.get("/health")
 def health():
-    """Простая проверка жизни процесса."""
+    """Простая проверка жизни процесса.
+
+    Returns:
+        Словарь со статусом процесса.
+    """
     return {"status": "alive"}
 
 
 @router.get("/health/ready")
 async def health_ready(request: Request):
-    """Проверка готовности: доступность PostgreSQL."""
+    """Проверка готовности: доступность PostgreSQL.
+
+    Returns:
+        Словарь со статусом ready при успешном запросе к БД,
+        иначе ответ 503 со статусом not ready.
+    """
     try:
         async with request.app.state.db_manager.engine.connect() as conn:
             await conn.execute(text("SELECT 1"))

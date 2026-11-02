@@ -1,12 +1,14 @@
 import logging
 import subprocess
 import sys
+import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dishka import make_async_container
 from dishka.integrations.fastapi import setup_dishka
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.configuration.container import AppProvider
@@ -19,14 +21,18 @@ logger = logging.getLogger(__name__)
 
 def run_migrations(settings: Settings) -> None:
     """Запускает Flyway-миграции через flyway CLI."""
-    # Определяем путь к миграциям относительно корня проекта
+    flyway_cmd = "flyway.cmd" if sys.platform == "win32" else "flyway"
+    flyway_path = shutil.which(flyway_cmd)
+
+    if flyway_path is None:
+        raise FileNotFoundError(f"{flyway_cmd} не найден в PATH")
+
     project_root = Path(__file__).resolve().parents[2]
     migrations_path = project_root / "app" / "migrations" / "sql"
 
-    flyway_cmd = "flyway.cmd" if sys.platform == "win32" else "flyway"
     result = subprocess.run(
         [
-            flyway_cmd,
+            flyway_path,
             "migrate",
             f"-url=jdbc:postgresql://{settings.db_host}:{settings.db_port}/{settings.db_name}",
             f"-user={settings.db_user}",
@@ -59,12 +65,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await db_manager.dispose()
 
     app = FastAPI(title="Web LLM", lifespan=lifespan)
+
+    # CORS-middleware добавляется до роутеров и перехватывает preflight (OPTIONS),
+    # иначе браузер блокирует cross-origin запросы фронтенда с 405
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.state.settings = settings
     app.state.db_manager = db_manager
 
     setup_exception_handlers(app)
 
-    container = make_async_container(AppProvider())
+    container = make_async_container(
+        AppProvider(),
+        # Штатные Settings/DatabaseManager из create_app пробрасываются в контейнер,
+        # чтобы DI не пересоздавал их из окружения/.env (иначе в тестах БД указывала бы не туда)
+        context={Settings: settings, DatabaseManager: db_manager},
+    )
     setup_dishka(container, app)
 
     from app.presentation_layer.controllers import router

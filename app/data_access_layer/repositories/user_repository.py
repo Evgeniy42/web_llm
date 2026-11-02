@@ -15,7 +15,7 @@ class UserRepository(
     count_with_window_function = False
 
     def __init__(self, session: AsyncSession) -> None:
-        super().__init__(session=session, auto_commit=True)
+        super().__init__(session=session, auto_commit=False, wrap_exceptions=False)
 
     async def get_user_by_email(self, email: str) -> UserEntity | None:
         model = await self.get_one_or_none(email=email)
@@ -29,8 +29,12 @@ class UserRepository(
         return user_model_to_entity(model) if model else None
 
     async def create_user(self, username: str, email: str, password: str) -> UserEntity:
+        # Прямой flush через сессию: advanced-alchemy add() оборачивает ошибки БД
+        # в собственные исключения, а контракт репозитория — sqlalchemy.exc.IntegrityError
         model = UserModel(username=username, email=email, password=password)
-        model = await self.add(model)
+        self.session.add(model)
+        await self.session.flush()
+        await self.session.refresh(model)
         return user_model_to_entity(model)
 
     async def delete_user(self, user_id: int) -> bool:

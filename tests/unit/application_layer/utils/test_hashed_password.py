@@ -6,20 +6,20 @@ from app.application_layer.utils.hashed_password import (
     hash_password,
     verify_password,
 )
+from tests.resources.mocks import TEST_PASSWORD
+from tests.resources.users import LONG_PASSWORD
 
 
 class TestHashPassword:
     def test_hash_password_success(self):
-        result = hash_password("password123")
+        result = hash_password(TEST_PASSWORD)
 
-        assert result != "password123"
+        assert result != TEST_PASSWORD
         assert result.startswith("$2b$")
 
     def test_hash_password_too_long(self):
-        long_password = "я" * 40  # 80 байт в UTF-8
-
         with pytest.raises(PasswordTooLongError):
-            hash_password(long_password)
+            hash_password(LONG_PASSWORD)
 
     def test_hash_password_max_bytes_boundary(self):
         # Ровно 72 байта — допустимо
@@ -35,16 +35,14 @@ class TestHashPassword:
 
 class TestVerifyPassword:
     def test_verify_password_correct(self):
-        hashed = hash_password("password123")
+        hashed = hash_password(TEST_PASSWORD)
 
-        assert verify_password("password123", hashed) is True
+        assert verify_password(TEST_PASSWORD, hashed) is True
 
     def test_verify_password_incorrect(self):
-        hashed = hash_password("password123")
+        hashed = hash_password(TEST_PASSWORD)
 
         assert verify_password("wrongpassword", hashed) is False
 
     def test_verify_password_too_long_returns_false(self):
-        long_password = "я" * 40
-
-        assert verify_password(long_password, "$2b$12$fake") is False
+        assert verify_password(LONG_PASSWORD, "$2b$12$fake") is False
