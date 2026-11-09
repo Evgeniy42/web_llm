@@ -25,6 +25,14 @@ class UserLoginRequestDTO(BaseModel):
     password: str = Field(description="Пароль пользователя")
 
 
+class UserLogoutRequestDTO(BaseModel):
+    """Данные запроса на выход из сессии."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: str = Field(description="Refresh-токен, полученный при входе или регистрации")
+
+
 class UserResponseDTO(BaseModel):
     """Данные пользователя в ответах API."""
 
@@ -33,3 +41,15 @@ class UserResponseDTO(BaseModel):
     id: int = Field(description="Идентификатор пользователя")
     username: str = Field(description="Отображаемое имя пользователя")
     email: EmailStr = Field(description="Адрес электронной почты")
+
+
+class UserAuthResponseDTO(BaseModel):
+    """Ответ на успешную регистрацию или вход: профиль пользователя и JWT сессии, выпущенный Keycloak."""
+
+    id: int = Field(description="Идентификатор пользователя")
+    username: str = Field(description="Отображаемое имя пользователя")
+    email: EmailStr = Field(description="Адрес электронной почты")
+    access_token: str = Field(description="JWT доступа; передаётся в заголовке Authorization: Bearer")
+    token_type: str = Field(description="Тип токена (Bearer)")
+    expires_in: int = Field(description="Время жизни access-токена в секундах")
+    refresh_token: str | None = Field(default=None, description="Токен обновления сессии, если выдан")

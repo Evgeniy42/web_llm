@@ -10,4 +10,5 @@ class UserModel(BaseORMModel):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(50), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    password: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Пароль хранится только в Keycloak; здесь — ссылка на пользователя Keycloak
+    keycloak_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)

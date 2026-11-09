@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.data_access_layer.repositories.user_repository import UserRepository
 from tests.resources.api import EMAIL_KEY, USERNAME_KEY
-from tests.resources.users import STUB_HASHED_PASSWORD, TEST_USER_1, TEST_USER_2
+from tests.resources.users import STUB_KEYCLOAK_ID_1, STUB_KEYCLOAK_ID_2, TEST_USER_1, TEST_USER_2
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ class TestUserRepository:
         user = await user_repo.create_user(
             username=TEST_USER_1[USERNAME_KEY],
             email=TEST_USER_1[EMAIL_KEY],
-            password=STUB_HASHED_PASSWORD,
+            keycloak_id=STUB_KEYCLOAK_ID_1,
         )
 
         assert user.id is not None
@@ -31,7 +31,7 @@ class TestUserRepository:
         await user_repo.create_user(
             username=TEST_USER_1[USERNAME_KEY],
             email=TEST_USER_1[EMAIL_KEY],
-            password=STUB_HASHED_PASSWORD,
+            keycloak_id=STUB_KEYCLOAK_ID_1,
         )
 
         found = await user_repo.get_user_by_email(TEST_USER_1[EMAIL_KEY])
@@ -42,13 +42,13 @@ class TestUserRepository:
         await user_repo.create_user(
             username=TEST_USER_1[USERNAME_KEY],
             email=TEST_USER_1[EMAIL_KEY],
-            password=STUB_HASHED_PASSWORD,
+            keycloak_id=STUB_KEYCLOAK_ID_1,
         )
 
         user2 = await user_repo.create_user(
             username=TEST_USER_1[USERNAME_KEY],
             email=TEST_USER_2[EMAIL_KEY],
-            password=STUB_HASHED_PASSWORD,
+            keycloak_id=STUB_KEYCLOAK_ID_2,
         )
         assert user2.username == TEST_USER_1[USERNAME_KEY]
 
@@ -56,14 +56,29 @@ class TestUserRepository:
         await user_repo.create_user(
             username=TEST_USER_1[USERNAME_KEY],
             email=TEST_USER_1[EMAIL_KEY],
-            password=STUB_HASHED_PASSWORD,
+            keycloak_id=STUB_KEYCLOAK_ID_1,
         )
 
         with pytest.raises(IntegrityError):
             await user_repo.create_user(
                 username=TEST_USER_2[USERNAME_KEY],
                 email=TEST_USER_1[EMAIL_KEY],
-                password=STUB_HASHED_PASSWORD,
+                keycloak_id=STUB_KEYCLOAK_ID_2,
+            )
+        await db_session.rollback()
+
+    async def test_duplicate_keycloak_id_raises_integrity_error(self, user_repo, db_session):
+        await user_repo.create_user(
+            username=TEST_USER_1[USERNAME_KEY],
+            email=TEST_USER_1[EMAIL_KEY],
+            keycloak_id=STUB_KEYCLOAK_ID_1,
+        )
+
+        with pytest.raises(IntegrityError):
+            await user_repo.create_user(
+                username=TEST_USER_2[USERNAME_KEY],
+                email=TEST_USER_2[EMAIL_KEY],
+                keycloak_id=STUB_KEYCLOAK_ID_1,
             )
         await db_session.rollback()
 
@@ -71,7 +86,7 @@ class TestUserRepository:
         user = await user_repo.create_user(
             username=TEST_USER_1[USERNAME_KEY],
             email=TEST_USER_1[EMAIL_KEY],
-            password=STUB_HASHED_PASSWORD,
+            keycloak_id=STUB_KEYCLOAK_ID_1,
         )
 
         updated = await user_repo.update_user(user.id, username="updated_name")
@@ -87,7 +102,7 @@ class TestUserRepository:
         user = await user_repo.create_user(
             username=TEST_USER_1[USERNAME_KEY],
             email=TEST_USER_1[EMAIL_KEY],
-            password=STUB_HASHED_PASSWORD,
+            keycloak_id=STUB_KEYCLOAK_ID_1,
         )
 
         assert await user_repo.delete_user(user.id) is True

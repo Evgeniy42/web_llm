@@ -1,0 +1,54 @@
+{
+  "realm": "web-llm",
+  "displayName": "Web LLM",
+  "enabled": true,
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "verifyEmail": false,
+  "accessTokenLifespan": 3600,
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "Пользователь чата: базовый доступ к приложению"
+      },
+      {
+        "name": "admin",
+        "description": "Администратор системы"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "web-llm-backend",
+      "name": "Web LLM Backend",
+      "description": "Серверная часть: вход по паролю (direct access grants) и управление пользователями (service account). Клиент не публичный, браузер с Keycloak напрямую не работает.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "web-llm-backend-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["web-origins", "profile", "email", "roles"],
+      "optionalClientScopes": ["kc-admin-api"]
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-web-llm-backend",
+      "enabled": true,
+      "serviceAccountClientId": "web-llm-backend",
+      "clientRoles": {
+        "realm-management": ["manage-users", "view-users", "view-realm"]
+      }
+    }
+  ]
+}

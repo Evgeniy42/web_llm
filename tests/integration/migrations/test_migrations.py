@@ -45,11 +45,15 @@ class TestMigrations:
             assert "id" in columns
             assert "username" in columns
             assert "email" in columns
-            assert "password" in columns
+            # Пароли хранятся в Keycloak; в таблице — только ссылка на пользователя Keycloak
+            assert "password" not in columns
+            assert "keycloak_id" in columns
 
             assert columns["username"][2] == 50  # VARCHAR(50)
             assert columns["email"][2] == 255  # VARCHAR(255)
+            assert columns["keycloak_id"][2] == 36  # VARCHAR(36)
             assert columns["username"][3] == "NO"  # NOT NULL
+            assert columns["keycloak_id"][3] == "NO"  # NOT NULL
         engine.dispose()
 
     def test_user_table_unique_constraints(self, test_settings):
@@ -60,5 +64,6 @@ class TestMigrations:
             ))
             indexes = [row[0] for row in result]
             assert "idx_user_email" in indexes
+            assert "idx_user_keycloak_id" in indexes
             assert "idx_user_username" not in indexes
         engine.dispose()

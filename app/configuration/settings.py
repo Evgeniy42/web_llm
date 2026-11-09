@@ -14,3 +14,10 @@ class Settings(BaseSettings):
     api_port: int = 8000
     # Origin'ы, которым разрешены cross-origin запросы (dev-сервер Vite)
     allowed_origins: list[str] = ["http://localhost:5173"]
+    # Keycloak: хранит пароли и роли, доступен только серверной части
+    keycloak_url: str = "http://localhost:8080"
+    keycloak_realm: str = "web-llm"
+    keycloak_client_id: str = "web-llm-backend"
+    keycloak_client_secret: str = "web-llm-backend-secret"
+    # Realm-роль Keycloak, назначаемая при регистрации
+    keycloak_default_role: str = "user"

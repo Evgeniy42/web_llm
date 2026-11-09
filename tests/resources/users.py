@@ -18,9 +18,11 @@ TEST_USER_2 = {
 NONEXISTENT_USER_ID = 999999
 NONEXISTENT_USER_EMAIL = "nonexistent@example.com"
 WRONG_PASSWORD = "wrongpassword"
+SHORT_PASSWORD = "short"  # меньше минимальных 8 символов из UserRegisterRequestDTO
 INVALID_EMAIL = "not-an-email"
-LONG_PASSWORD = "я" * 40  # 80 байт в UTF-8, больше лимита bcrypt (72 байта)
-STUB_HASHED_PASSWORD = "hashed_password"  # заглушка хеша для тестов репозитория
+# Заглушки идентификаторов Keycloak для тестов репозитория (keycloak_id уникален)
+STUB_KEYCLOAK_ID_1 = "00000000-0000-0000-0000-000000000001"
+STUB_KEYCLOAK_ID_2 = "00000000-0000-0000-0000-000000000002"
 
 
 def register_payload(user: dict, **overrides) -> dict:

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.configuration.application_factory import create_app
 from app.configuration.settings import Settings
 from tests.config import IntegrationTestSettings
+from tests.resources.mocks import MockKeycloakClient
 
 # На Windows psycopg async требует SelectorEventLoop вместо ProactorEventLoop
 if sys.platform == "win32":
@@ -53,7 +54,14 @@ def apply_migrations(test_settings):
 
 
 @pytest.fixture(scope="session")
-def app(test_settings):
+def keycloak_mock() -> MockKeycloakClient:
+    """In-memory заглушка Keycloak: интеграционные тесты проверяют API + БД,
+    а внешний Keycloak подменяется контрактно-совместимым моком."""
+    return MockKeycloakClient()
+
+
+@pytest.fixture(scope="session")
+def app(test_settings, keycloak_mock):
     """Приложение создаётся штатной фабрикой create_app из app.configuration.
 
     Все параметры БД (host, port, user, password, name) извлекаются из
@@ -68,17 +76,18 @@ def app(test_settings):
         db_host=url.host or "localhost",
         db_port=url.port or 5432,
     )
-    application = create_app(settings)
+    application = create_app(settings, keycloak_client=keycloak_mock)
     yield application
 
 
 @pytest.fixture(autouse=True)
-async def clean_users_table(app):
-    """Очищает таблицу user перед каждым тестом.
+async def clean_users_table(app, keycloak_mock):
+    """Очищает таблицу user и состояние мока Keycloak перед каждым тестом.
 
     API-тесты коммитят данные реальными запросами; без очистки повторная
     регистрация одного и того же TEST_USER_1 соседними тестами давала бы конфликты.
     """
+    keycloak_mock.reset()
     async with app.state.db_manager.engine.begin() as conn:
         await conn.execute(text('TRUNCATE TABLE "user" RESTART IDENTITY CASCADE'))
     yield

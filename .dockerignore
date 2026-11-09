@@ -28,6 +28,9 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 
+# Keycloak realm config (нужен только контейнеру keycloak, не образу приложения)
+keycloak/
+
 # Database
 *.db
 *.sqlite

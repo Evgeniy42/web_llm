@@ -11,9 +11,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.application_layer.contracts.keycloak_protocol import KeycloakClientProtocol
 from app.configuration.container import AppProvider
 from app.configuration.database import DatabaseManager
 from app.configuration.settings import Settings
+from app.data_access_layer.keycloak_client import KeycloakClient
 from app.presentation_layer.handlers.http_exception_handlers import setup_exception_handlers
 
 logger = logging.getLogger(__name__)
@@ -46,11 +48,22 @@ def run_migrations(settings: Settings) -> None:
         raise RuntimeError(f"Flyway migration failed: {result.stderr or result.stdout}")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    keycloak_client: KeycloakClientProtocol | None = None,
+) -> FastAPI:
     if settings is None:
         settings = Settings()
 
     db_manager = DatabaseManager(settings.database_url)
+    if keycloak_client is None:
+        keycloak_client = KeycloakClient(
+            base_url=settings.keycloak_url,
+            realm=settings.keycloak_realm,
+            client_id=settings.keycloak_client_id,
+            client_secret=settings.keycloak_client_secret,
+            default_role=settings.keycloak_default_role,
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -63,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             yield
         finally:
             await db_manager.dispose()
+            await keycloak_client.close()
 
     app = FastAPI(title="Web LLM", lifespan=lifespan)
 
@@ -78,14 +92,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.state.settings = settings
     app.state.db_manager = db_manager
+    app.state.keycloak_client = keycloak_client
 
     setup_exception_handlers(app)
 
     container = make_async_container(
         AppProvider(),
-        # Штатные Settings/DatabaseManager из create_app пробрасываются в контейнер,
+        # Штатные Settings/DatabaseManager/KeycloakClient из create_app пробрасываются в контейнер,
         # чтобы DI не пересоздавал их из окружения/.env (иначе в тестах БД указывала бы не туда)
-        context={Settings: settings, DatabaseManager: db_manager},
+        context={
+            Settings: settings,
+            DatabaseManager: db_manager,
+            KeycloakClientProtocol: keycloak_client,
+        },
     )
     setup_dishka(container, app)
 

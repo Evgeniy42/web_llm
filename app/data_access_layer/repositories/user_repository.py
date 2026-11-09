@@ -21,17 +21,14 @@ class UserRepository(
         model = await self.get_one_or_none(email=email)
         return user_model_to_entity(model) if model else None
 
-    async def get_user_model_by_email(self, email: str) -> UserModel | None:
-        return await self.get_one_or_none(email=email)
-
     async def get_user_by_id(self, user_id: int) -> UserEntity | None:
         model = await self.get_one_or_none(id=user_id)
         return user_model_to_entity(model) if model else None
 
-    async def create_user(self, username: str, email: str, password: str) -> UserEntity:
+    async def create_user(self, username: str, email: str, keycloak_id: str) -> UserEntity:
         # Прямой flush через сессию: advanced-alchemy add() оборачивает ошибки БД
         # в собственные исключения, а контракт репозитория — sqlalchemy.exc.IntegrityError
-        model = UserModel(username=username, email=email, password=password)
+        model = UserModel(username=username, email=email, keycloak_id=keycloak_id)
         self.session.add(model)
         await self.session.flush()
         await self.session.refresh(model)

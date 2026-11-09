@@ -1,7 +1,6 @@
 from typing import Protocol
 
 from app.across_layers.entities.user_entity import UserEntity
-from app.data_access_layer.models.user_model import UserModel
 
 
 class UserRepositoryProtocol(Protocol):
@@ -9,9 +8,7 @@ class UserRepositoryProtocol(Protocol):
 
     async def get_user_by_email(self, email: str) -> UserEntity | None: ...
 
-    async def get_user_model_by_email(self, email: str) -> UserModel | None: ...
-
-    async def create_user(self, username: str, email: str, password: str) -> UserEntity: ...
+    async def create_user(self, username: str, email: str, keycloak_id: str) -> UserEntity: ...
 
     async def delete_user(self, user_id: int) -> bool: ...
 

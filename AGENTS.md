@@ -3,20 +3,23 @@
 ### Краткое описание
 Fullstack-приложение для чата с LLM. Backend: сервис пользователя (регистрация, вход,
 получение по ID) и минимальный сценарий чата (10 случайных ответов вместо LLM).
-Frontend: React-приложение для веб-интерфейса чата.
+Регистрация и аутентификация — через Keycloak (пароли и роли хранятся там,
+backend отдаёт клиенту JWT сессии). Frontend: React-приложение для веб-интерфейса чата.
 
 ### Стек
 - CI/CD: Docker Compose
 - Backend: FastAPI, SQLAlchemy 2.x, Pydantic 2.x, PostgreSQL 16
+- Auth: Keycloak 26 (realm `web-llm` импортируется из `keycloak/realm-web-llm.json`;
+  отдельная PostgreSQL `keycloak-db`; доступ только с backend)
 - Frontend: React 19, Vite, oxlint
 - Migration: Flyway (выполняется при старте приложения)
-- Тесты: pytest (unit + integration с настоящей PostgreSQL)
+- Тесты: pytest (unit + integration с настоящей PostgreSQL; Keycloak заменён моком)
 
 ### Архитектура backend
-- `across_layers/entities` — внутренние сущности (UserEntity)
-- `application_layer/` — бизнес-логика (сервисы, контракты, утилиты)
+- `across_layers/entities` — внутренние сущности (UserEntity, TokenInfo)
+- `application_layer/` — бизнес-логика (сервисы, контракты: UserRepositoryProtocol, KeycloakClientProtocol)
 - `configuration/` — настройки, фабрика приложения, DatabaseManager
-- `data_access_layer/` — ORM-модели, репозитории, мапперы
+- `data_access_layer/` — ORM-модели, репозитории, мапперы, `keycloak_client.py` (Admin REST API + OIDC)
 - `presentation_layer/` — DTO, роутеры
 - `migrations/sql/` — SQL-миграции Flyway
 
@@ -31,7 +34,10 @@ Frontend: React-приложение для веб-интерфейса чата
 - `main.jsx` — точка входа
 
 ### Сервисы
-- UserService — регистрация, вход, получение пользователя
+- UserService — регистрация и вход через Keycloak (пароль уходит только в Keycloak,
+  в локальной БД — профиль и `keycloak_id`), получение пользователя;
+  register/login возвращают `AuthResult` (UserEntity + TokenInfo с JWT от Keycloak),
+  logout отзывает refresh-токен в Keycloak
 - ChatService — отправка сообщений (MockLLM с 10 случайными ответами)
 
 ### Тесты (`tests/`)
@@ -41,7 +47,8 @@ Frontend: React-приложение для веб-интерфейса чата
   структура по слоям: `presentation_layer/`, `data_access_layer/`, `migrations/`;
   приложение создаётся штатной `create_app` из `app/configuration`, параметры БД — из `TEST_DATABASE_URL`
 - `resources/` — общие тестовые данные и константы: `api.py` (пути и ключи JSON),
-  `users.py` (пользователи и payload-конструкторы), `mocks.py` (моки и фабрики для unit-тестов).
+  `users.py` (пользователи и payload-конструкторы), `mocks.py` (моки и фабрики,
+  в т.ч. `MockKeycloakClient` — in-memory заглушка Keycloak для unit- и API-тестов).
   Повторяющиеся значения хранятся здесь, а не в тестах
 
 ### Скрипты frontend
