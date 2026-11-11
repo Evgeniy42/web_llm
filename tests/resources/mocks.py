@@ -3,9 +3,12 @@
 from uuid import uuid4
 
 from app.across_layers.entities.token_info import TokenInfo
+from app.across_layers.entities.token_payload import TokenPayload
 from app.across_layers.entities.user_entity import UserEntity
+from app.across_layers.roles import ROLE_USER
 from app.application_layer.contracts.keycloak_protocol import (
     KeycloakClientProtocol,
+    KeycloakError,
     KeycloakInvalidCredentialsError,
     KeycloakInvalidTokenError,
     KeycloakUserExistsError,
@@ -49,18 +52,23 @@ class MockKeycloakClient(KeycloakClientProtocol):
     Поведение повторяет контракт: дубликат email при создании -> KeycloakUserExistsError,
     неверная пара логин/пароль -> KeycloakInvalidCredentialsError,
     невалидный или отозванный refresh-токен -> KeycloakInvalidTokenError.
+    Роли хранятся у пользователя, а в access-токен попадают снимком при входе —
+    как в JWT настоящего Keycloak: назначенная после входа роль появится
+    в токене только после повторной аутентификации.
     """
 
     def __init__(self) -> None:
-        self._users: dict[str, dict[str, str]] = {}
+        self._users: dict[str, dict] = {}
         self._refresh_tokens: set[str] = set()
         self._revoked_refresh_tokens: set[str] = set()
+        # access_token -> снимок полезной нагрузки на момент входа (как в JWT)
+        self._access_tokens: dict[str, TokenPayload] = {}
 
     async def create_user(self, username: str, email: str, password: str) -> str:
         if email in self._users:
             raise KeycloakUserExistsError(f"Пользователь с email '{email}' уже существует в Keycloak")
         keycloak_id = str(uuid4())
-        self._users[email] = {"id": keycloak_id, "password": password}
+        self._users[email] = {"id": keycloak_id, "password": password, "roles": {ROLE_USER}}
         return keycloak_id
 
     async def authenticate(self, email: str, password: str) -> TokenInfo:
@@ -69,8 +77,14 @@ class MockKeycloakClient(KeycloakClientProtocol):
             raise KeycloakInvalidCredentialsError("Keycloak отклонил логин или пароль")
         refresh_token = f"{REFRESH_TOKEN}-{email}-{uuid4()}"
         self._refresh_tokens.add(refresh_token)
+        access_token = f"{ACCESS_TOKEN}-{email}-{uuid4()}"
+        self._access_tokens[access_token] = TokenPayload(
+            sub=user["id"],
+            email=email,
+            roles=frozenset(user["roles"]),
+        )
         return TokenInfo(
-            access_token=f"{ACCESS_TOKEN}-{email}",
+            access_token=access_token,
             token_type=TOKEN_TYPE,
             expires_in=EXPIRES_IN,
             refresh_token=refresh_token,
@@ -92,6 +106,19 @@ class MockKeycloakClient(KeycloakClientProtocol):
                 del self._users[email]
                 return
 
+    async def validate_token(self, access_token: str) -> TokenPayload:
+        payload = self._access_tokens.get(access_token)
+        if payload is None:
+            raise KeycloakInvalidTokenError("Keycloak отклонил access-токен")
+        return payload
+
+    async def assign_role(self, keycloak_id: str, role_name: str) -> None:
+        for data in self._users.values():
+            if data["id"] == keycloak_id:
+                data["roles"].add(role_name)
+                return
+        raise KeycloakError(f"Пользователь {keycloak_id} не найден в Keycloak")
+
     async def close(self) -> None:
         pass
 
@@ -99,3 +126,4 @@ class MockKeycloakClient(KeycloakClientProtocol):
         self._users.clear()
         self._refresh_tokens.clear()
         self._revoked_refresh_tokens.clear()
+        self._access_tokens.clear()

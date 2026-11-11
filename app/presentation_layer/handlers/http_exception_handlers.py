@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
+from app.application_layer.contracts.keycloak_protocol import KeycloakError
 from app.application_layer.services.user_service import (
     InvalidCredentialsError,
     UserAlreadyExistsError,
@@ -36,8 +37,16 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     )
 
 
+async def keycloak_error_handler(request: Request, exc: KeycloakError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        content={"detail": f"Ошибка сервиса аутентификации: {exc}"},
+    )
+
+
 def setup_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(UserNotFoundError, user_not_found_handler)
     app.add_exception_handler(UserAlreadyExistsError, user_already_exists_handler)
     app.add_exception_handler(InvalidCredentialsError, invalid_credentials_handler)
+    app.add_exception_handler(KeycloakError, keycloak_error_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)

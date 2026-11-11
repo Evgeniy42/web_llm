@@ -3,6 +3,7 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.across_layers.roles import ROLE_VIP_USER
 from app.application_layer.contracts.keycloak_protocol import (
     KeycloakClientProtocol,
     KeycloakInvalidCredentialsError,
@@ -159,6 +160,13 @@ class TestLoginUser:
 
         with pytest.raises(InvalidCredentialsError):
             await user_service.login_user(TEST_EMAIL, TEST_PASSWORD)
+
+
+class TestGrantSubscription:
+    async def test_assigns_vip_role_in_keycloak(self, user_service, mock_keycloak):
+        await user_service.grant_subscription(KEYCLOAK_USER_ID)
+
+        mock_keycloak.assign_role.assert_awaited_once_with(KEYCLOAK_USER_ID, ROLE_VIP_USER)
 
 
 class TestLogoutUser:

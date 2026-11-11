@@ -13,7 +13,11 @@
     "realm": [
       {
         "name": "user",
-        "description": "Пользователь чата: базовый доступ к приложению"
+        "description": "Пользователь чата: базовый доступ к приложению, без подписки чат запрещён"
+      },
+      {
+        "name": "vip_user",
+        "description": "Пользователь с подпиской: доступ к чату"
       },
       {
         "name": "admin",
@@ -37,7 +41,7 @@
       "serviceAccountsEnabled": true,
       "authorizationServicesEnabled": false,
       "fullScopeAllowed": true,
-      "defaultClientScopes": ["web-origins", "profile", "email", "roles"],
+      "defaultClientScopes": ["web-origins", "profile", "email", "roles", "basic"],
       "optionalClientScopes": ["kc-admin-api"]
     }
   ],

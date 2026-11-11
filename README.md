@@ -128,12 +128,13 @@ app/
 ├── migrations/sql/         # SQL-миграции Flyway
 └── presentation_layer/     # HTTP-слой
     ├── dto/                # Pydantic DTO
+    ├── dependencies/       # Зависимости FastAPI (аутентификация по Bearer JWT, RBAC)
     └── routers/            # FastAPI роутеры
 ```
 
 Аутентификация (Keycloak):
 
-- Realm `web-llm`, роли `user`/`admin` и клиент `web-llm-backend` описаны в `keycloak/realm-web-llm.json` и импортируются при старте контейнера.
+- Realm `web-llm`, роли `user`/`vip_user`/`admin` и клиент `web-llm-backend` описаны в `keycloak/realm-web-llm.json` и импортируются при старте контейнера.
 - Пароли и роли хранятся только в Keycloak; таблица `user` хранит профиль и `keycloak_id`.
 - `POST /user/login` возвращает JWT сессии (`access_token`, `refresh_token`, `expires_in`), выпущенный Keycloak.
 
@@ -146,8 +147,17 @@ app/
 | POST | `/user/register` | Регистрация пользователя (в Keycloak); сразу возвращает JWT сессии |
 | POST | `/user/login` | Вход; возвращает JWT сессии, выпущенный Keycloak |
 | POST | `/user/logout` | Выход из сессии; отзывает refresh-токен в Keycloak |
+| POST | `/user/subscription` | Оформление подписки (имитация): назначает роль `vip_user`; требует Bearer-токен |
 | GET | `/user/{id}` | Получение пользователя |
-| POST | `/chat/send` | Отправка сообщения в чат |
+| POST | `/chat/send` | Отправка сообщения в чат; требует Bearer-токен с ролью `vip_user` или `admin` |
+
+## RBAC
+
+Роли хранятся в Keycloak (realm `web-llm`): `user` — без подписки, `vip_user` — с подпиской, `admin` — администратор.
+Backend валидирует JWT из заголовка `Authorization: Bearer` (подпись RS256 по JWKS realm'а, issuer, срок действия) и читает роли из claim `realm_access.roles`:
+
+- `/chat/send` доступен ролям `vip_user` и `admin`. Пользователь с ролью `user` получает `200` с сообщением чата «У вас нет подписки. Доступ к чату запрещен.» — фронтенд показывает его в диалоге.
+- `/user/subscription` — имитация оплаты подписки: назначает роль `vip_user` текущему пользователю (по `sub` из JWT). Роль попадёт в токен только после повторного входа — роли зашиты в выданный JWT снимком.
 
 ## Проверки качества
 

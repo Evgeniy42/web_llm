@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.across_layers.entities.token_info import TokenInfo
 from app.across_layers.entities.user_entity import UserEntity
+from app.across_layers.roles import ROLE_VIP_USER
 from app.application_layer.contracts.keycloak_protocol import (
     KeycloakClientProtocol,
     KeycloakInvalidCredentialsError,
@@ -128,6 +129,17 @@ class UserService:
             raise InvalidCredentialsError("Неправильный пароль или логин!")
 
         return AuthResult(user=user, token=token)
+
+    async def grant_subscription(self, keycloak_id: str) -> None:
+        """Оформляет подписку: назначает пользователю роль vip_user в Keycloak.
+
+        Имитация оплаты: проверки платежа нет. Роль назначается сразу, но в JWT
+        она попадёт только после повторного входа — роли зашиты в выданный токен.
+
+        Args:
+            keycloak_id: идентификатор пользователя в Keycloak (sub из JWT).
+        """
+        await self.keycloak.assign_role(keycloak_id, ROLE_VIP_USER)
 
     async def logout_user(self, refresh_token: str) -> None:
         """Завершает сессию пользователя, отзывая refresh-токен в Keycloak.

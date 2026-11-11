@@ -1,8 +1,10 @@
 import time
 
 import httpx
+import jwt
 
 from app.across_layers.entities.token_info import TokenInfo
+from app.across_layers.entities.token_payload import TokenPayload
 from app.application_layer.contracts.keycloak_protocol import (
     KeycloakClientProtocol,
     KeycloakError,
@@ -39,6 +41,8 @@ class KeycloakClient(KeycloakClientProtocol):
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
         self._service_token: str | None = None
         self._service_token_expires_at: float = 0.0
+        # JWKS realm'а: публичные ключи для проверки подписи JWT, кешируются
+        self._jwks: dict | None = None
 
     async def create_user(self, username: str, email: str, password: str) -> str:
         """Создаёт пользователя в Keycloak с паролем и realm-ролью по умолчанию.
@@ -147,6 +151,69 @@ class KeycloakClient(KeycloakClientProtocol):
                 f"Keycloak не удалил пользователя {keycloak_id}: HTTP {response.status_code}: {response.text}"
             )
 
+    async def assign_role(self, keycloak_id: str, role_name: str) -> None:
+        """Назначает пользователю realm-роль Keycloak.
+
+        Идемпотентно на стороне Keycloak: повторное назначение той же роли
+        не создаёт дубликатов в role-mappings.
+
+        Args:
+            keycloak_id: идентификатор пользователя в Keycloak (UUID, sub из JWT).
+            role_name: имя realm-роли, описанной в realm.
+
+        Raises:
+            KeycloakError: роль не найдена в realm или Keycloak отклонил назначение.
+        """
+        await self._assign_realm_role(keycloak_id, role_name)
+
+    async def validate_token(self, access_token: str) -> TokenPayload:
+        """Проверяет JWT доступа и возвращает его полезную нагрузку.
+
+        Подпись проверяется по JWKS realm'а (RS256, ключи кешируются и
+        перечитываются при неизвестном kid — ротация ключей), issuer и срок
+        действия — стандартной валидацией PyJWT. Роли извлекаются из
+        claim `realm_access.roles`.
+
+        Args:
+            access_token: JWT доступа, полученный клиентом при входе.
+
+        Returns:
+            Идентификатор пользователя, email и набор realm-ролей из токена.
+
+        Raises:
+            KeycloakInvalidTokenError: токен битый, истёк или подпись не сошлась.
+            KeycloakError: Keycloak недоступен (не удалось получить JWKS).
+        """
+        try:
+            kid = jwt.get_unverified_header(access_token).get("kid")
+        except jwt.PyJWTError as e:
+            raise KeycloakInvalidTokenError("Токен имеет неверный формат") from e
+
+        key = await self._get_signing_key(kid)
+        try:
+            payload = jwt.decode(
+                access_token,
+                key=key,
+                algorithms=["RS256"],
+                issuer=f"{self._client.base_url}/realms/{self._realm}",
+                # Аудитория не проверяется: токен выдаётся нашему же клиенту web-llm-backend
+                options={"verify_aud": False},
+            )
+        except jwt.PyJWTError as e:
+            raise KeycloakInvalidTokenError("Токен недействителен или истёк") from e
+
+        # sub добавляется client scope "basic" (oidc-sub-mapper) — без него
+        # токен не идентифицирует пользователя и для нас недействителен
+        sub = payload.get("sub")
+        if not sub:
+            raise KeycloakInvalidTokenError("В токене нет sub: идентификатор пользователя отсутствует")
+
+        return TokenPayload(
+            sub=sub,
+            email=payload.get("email"),
+            roles=frozenset(payload.get("realm_access", {}).get("roles", [])),
+        )
+
     async def close(self) -> None:
         """Закрывает HTTP-клиент и освобождает соединения."""
         await self._client.aclose()
@@ -203,3 +270,31 @@ class KeycloakClient(KeycloakClientProtocol):
                 f"Keycloak не назначил роль '{role_name}' пользователю {keycloak_id}: "
                 f"HTTP {mapping_response.status_code}: {mapping_response.text}"
             )
+
+    async def _get_signing_key(self, kid: str | None) -> jwt.PyJWK:
+        """Возвращает публичный ключ подписи JWT по kid из JWKS realm'а.
+
+        При неизвестном kid JWKS перечитывается один раз (ротация ключей),
+        прежде чем токен будет окончательно отклонён.
+        """
+        for force_refresh in (False, True):
+            jwks = await self._get_jwks(force_refresh=force_refresh)
+            jwk = next((k for k in jwks.get("keys", []) if k.get("kid") == kid), None)
+            if jwk is not None:
+                return jwt.PyJWK(jwk)
+        raise KeycloakInvalidTokenError("Ключ подписи токена не найден в JWKS realm'а")
+
+    async def _get_jwks(self, force_refresh: bool = False) -> dict:
+        """Возвращает кешированный JWKS realm'а или запрашивает его у Keycloak."""
+        if self._jwks is not None and not force_refresh:
+            return self._jwks
+
+        response = await self._client.get(
+            f"/realms/{self._realm}/protocol/openid-connect/certs",
+        )
+        if response.status_code != 200:
+            raise KeycloakError(
+                f"Keycloak не вернул JWKS: HTTP {response.status_code}: {response.text}"
+            )
+        self._jwks = response.json()
+        return self._jwks

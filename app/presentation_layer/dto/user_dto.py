@@ -43,6 +43,12 @@ class UserResponseDTO(BaseModel):
     email: EmailStr = Field(description="Адрес электронной почты")
 
 
+class SubscriptionResponseDTO(BaseModel):
+    """Ответ на запрос оформления подписки (имитация оплаты)."""
+
+    message: str = Field(description="Текст подтверждения оформления подписки")
+
+
 class UserAuthResponseDTO(BaseModel):
     """Ответ на успешную регистрацию или вход: профиль пользователя и JWT сессии, выпущенный Keycloak."""
 

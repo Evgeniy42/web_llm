@@ -1,6 +1,7 @@
 from typing import Protocol
 
 from app.across_layers.entities.token_info import TokenInfo
+from app.across_layers.entities.token_payload import TokenPayload
 
 
 class KeycloakError(Exception):
@@ -33,5 +34,9 @@ class KeycloakClientProtocol(Protocol):
     async def logout(self, refresh_token: str) -> None: ...
 
     async def delete_user(self, keycloak_id: str) -> None: ...
+
+    async def validate_token(self, access_token: str) -> TokenPayload: ...
+
+    async def assign_role(self, keycloak_id: str, role_name: str) -> None: ...
 
     async def close(self) -> None: ...

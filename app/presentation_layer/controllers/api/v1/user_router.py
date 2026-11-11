@@ -9,7 +9,9 @@ from app.application_layer.services.user_service import (
     UserNotFoundError,
     UserService,
 )
+from app.presentation_layer.dependencies.auth import CurrentUser
 from app.presentation_layer.dto.user_dto import (
+    SubscriptionResponseDTO,
     UserAuthResponseDTO,
     UserLoginRequestDTO,
     UserLogoutRequestDTO,
@@ -91,6 +93,29 @@ async def login(
         ) from e
 
     return _to_auth_response(result)
+
+
+@router.post("/subscription", response_model=SubscriptionResponseDTO)
+async def subscribe(
+    user: CurrentUser,
+    service: FromDishka[UserService],
+):
+    """Оформляет подписку текущему пользователю (имитация оплаты).
+
+    Назначает пользователю realm-роль vip_user в Keycloak. Пользователь
+    определяется по sub из JWT в заголовке Authorization. Новая роль
+    появится в токене только после повторного входа.
+
+    Args:
+        user: полезная нагрузка валидированного JWT текущего пользователя.
+
+    Returns:
+        Подтверждение оформления подписки. Без валидного токена — 401 Unauthorized.
+    """
+    await service.grant_subscription(keycloak_id=user.sub)
+    return SubscriptionResponseDTO(
+        message="Подписка оформлена. Перевойдите, чтобы получить токен с доступом к чату."
+    )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
