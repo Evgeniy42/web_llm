@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.across_layers.entities.token_info import TokenInfo
 from app.across_layers.entities.user_entity import UserEntity
-from app.across_layers.roles import ROLE_VIP_USER
+from app.across_layers.roles import ROLE_USER, ROLE_VIP_USER
 from app.application_layer.contracts.keycloak_protocol import (
     KeycloakClientProtocol,
     KeycloakInvalidCredentialsError,
@@ -38,10 +38,44 @@ class AuthResult:
     token: TokenInfo
 
 
+def _username_from_email(email: str) -> str:
+    """Выводит имя профиля из email для пользователей, созданных через соцсеть.
+
+    Google не передаёт отображаемое имя нашего приложения, поэтому берётся
+    локальная часть email. Ограничения — из UserModel: VARCHAR(50), без unique.
+    """
+    local = email.split("@", 1)[0].strip()
+    if len(local) < 3:
+        local = f"user_{local}"
+    return local[:50]
+
+
 @dataclass(slots=True)
 class UserService:
     repository: UserRepositoryProtocol
     keycloak: KeycloakClientProtocol
+    # Эндпоинт backend'а, куда Keycloak возвращает браузер после входа через Google
+    google_redirect_uri: str = "http://localhost:8000/api/v1/user/login/google/callback"
+    # Alias identity provider'а Google в Keycloak (kc_idp_hint)
+    google_idp_alias: str = "google"
+
+    def build_google_login_url(self, state: str) -> str:
+        """Строит URL входа через Google: страница авторизации Keycloak с kc_idp_hint.
+
+        Браузер перенаправляется на этот URL; Keycloak сразу ведёт на форму
+        входа Google, минуя собственную страницу логина.
+
+        Args:
+            state: случайная строка защиты от CSRF; Keycloak вернёт её в callback.
+
+        Returns:
+            Абсолютный URL авторизации Keycloak.
+        """
+        return self.keycloak.build_authorization_url(
+            redirect_uri=self.google_redirect_uri,
+            state=state,
+            idp_alias=self.google_idp_alias,
+        )
 
     async def get_user_by_id(self, user_id: int) -> UserEntity:
         """Возвращает пользователя по идентификатору.
@@ -56,6 +90,23 @@ class UserService:
             UserNotFoundError: пользователь с таким идентификатором не найден.
         """
         user = await self.repository.get_user_by_id(user_id)
+        if user is None:
+            raise UserNotFoundError("Пользователь не найден!")
+        return user
+
+    async def get_user_by_email(self, email: str) -> UserEntity:
+        """Возвращает пользователя по email.
+
+        Args:
+            email: адрес электронной почты пользователя.
+
+        Returns:
+            Найденный пользователь.
+
+        Raises:
+            UserNotFoundError: пользователь с таким email не найден.
+        """
+        user = await self.repository.get_user_by_email(email)
         if user is None:
             raise UserNotFoundError("Пользователь не найден!")
         return user
@@ -127,6 +178,52 @@ class UserService:
         if user is None:
             # Keycloak подтвердил пароль, но локального профиля нет — данные рассинхронизированы
             raise InvalidCredentialsError("Неправильный пароль или логин!")
+
+        return AuthResult(user=user, token=token)
+
+    async def login_with_google(self, code: str) -> AuthResult:
+        """Завершает вход через Google: обменивает код авторизации на сессию.
+
+        Браузер приходит на callback backend'а с кодом от Keycloak после входа
+        в Google. Пользователь, вошедший впервые, создан брокером Keycloak мимо
+        backend'а: локального профиля у него ещё нет — создаём его по данным
+        из JWT (sub, email). Если email совпадает с уже зарегистрированным
+        пользователем, выполняется вход в существующий аккаунт.
+
+        Args:
+            code: одноразовый код авторизации из query-параметра callback'а.
+
+        Returns:
+            Пользователь и JWT-токены сессии, выпущенные Keycloak.
+
+        Raises:
+            InvalidCredentialsError: код отклонён или Google не вернул email.
+        """
+        try:
+            token = await self.keycloak.exchange_code(
+                code=code,
+                redirect_uri=self.google_redirect_uri,
+            )
+        except KeycloakInvalidCredentialsError as e:
+            raise InvalidCredentialsError("Не удалось войти через Google!") from e
+
+        payload = await self.keycloak.validate_token(token.access_token)
+        if not payload.email:
+            raise InvalidCredentialsError("Google не вернул email пользователя!")
+
+        user = await self.repository.get_user_by_email(payload.email)
+        if user is None:
+            user = await self.repository.create_user(
+                # Имя из профиля Google; если его нет — локальная часть email
+                username=payload.full_name or _username_from_email(payload.email),
+                email=payload.email,
+                keycloak_id=payload.sub,
+            )
+
+        if ROLE_USER not in payload.roles:
+            # Пользователь создан брокером, роль назначена не была. Как и при
+            # подписке, в уже выданный токен она не попадёт — нужен повторный вход
+            await self.keycloak.assign_role(payload.sub, ROLE_USER)
 
         return AuthResult(user=user, token=token)
 

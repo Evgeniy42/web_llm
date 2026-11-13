@@ -75,6 +75,12 @@ services:
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-web-llm-backend}
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-web-llm-backend-secret}
       KEYCLOAK_DEFAULT_ROLE: ${KEYCLOAK_DEFAULT_ROLE:-user}
+      # Адрес Keycloak для браузера (вход через Google идёт редиректами)
+      KEYCLOAK_PUBLIC_URL: http://localhost:${KEYCLOAK_PORT:-8080}
+      # Адрес фронтенда для финального редиректа входа через Google
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      GOOGLE_REDIRECT_URI: http://localhost:${API_PORT:-8000}/api/v1/user/login/google/callback
+      GOOGLE_IDP_ALIAS: ${GOOGLE_IDP_ALIAS:-google}
     depends_on:
       db:
         condition: service_healthy

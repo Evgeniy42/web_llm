@@ -25,24 +25,51 @@
       }
     ]
   },
+  "defaultRole": {
+    "name": "default-roles-web-llm",
+    "description": "Роли по умолчанию: user получают все новые пользователи, в т.ч. созданные брокером Google (он проходит мимо backend'а)",
+    "composite": true,
+    "clientRole": false,
+    "composites": {
+      "realm": ["user"]
+    }
+  },
   "clients": [
     {
       "clientId": "web-llm-backend",
       "name": "Web LLM Backend",
-      "description": "Серверная часть: вход по паролю (direct access grants) и управление пользователями (service account). Клиент не публичный, браузер с Keycloak напрямую не работает.",
+      "description": "Серверная часть: вход по паролю (direct access grants), вход через Google (standard flow: браузер уходит в Keycloak и возвращается с кодом на callback backend'а) и управление пользователями (service account).",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
       "secret": "web-llm-backend-secret",
-      "standardFlowEnabled": false,
+      "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": true,
       "authorizationServicesEnabled": false,
       "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:8000/api/v1/user/login/google/callback"
+      ],
+      "webOrigins": ["+"],
       "defaultClientScopes": ["web-origins", "profile", "email", "roles", "basic"],
       "optionalClientScopes": ["kc-admin-api"]
+    }
+  ],
+  "identityProviders": [
+    {
+      "alias": "google",
+      "displayName": "Google",
+      "providerId": "google",
+      "enabled": true,
+      "trustEmail": true,
+      "config": {
+        "clientId": "ЗАПОЛНИТЬ: Client ID из Google Cloud Console",
+        "clientSecret": "ЗАПОЛНИТЬ: Client Secret из Google Cloud Console",
+        "useJwksUrl": "true"
+      }
     }
   ],
   "users": [

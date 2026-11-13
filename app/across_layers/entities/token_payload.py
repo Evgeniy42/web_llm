@@ -9,3 +9,6 @@ class TokenPayload:
     sub: str
     email: str | None
     roles: frozenset[str]
+    # Отображаемое имя из профиля identity provider'а (Google): claim name/given_name.
+    # Заполнено только при входе через соцсеть; при входе по паролю — None
+    full_name: str | None = None

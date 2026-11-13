@@ -47,6 +47,16 @@ docker compose up --build
 
 Регистрация и вход идут через backend: он создаёт пользователя и проверяет пароль в Keycloak, а клиенту возвращает JWT сессии. Клиент с Keycloak напрямую не общается.
 
+### Вход через Google
+
+Google подключён как Identity Provider в Keycloak (см. `identityProviders` в `keycloak/realm-web-llm.json`). Кнопка «Войти через Google» на клиенте — обычная ссылка на `GET /user/login/google`: браузер уходит в Keycloak → Google и возвращается на `GET /user/login/google/callback` с кодом, backend обменивает его на токены и делает 302-редирект на фронтенд: `{FRONTEND_URL}/auth/callback#access_token=...&refresh_token=...&token_type=Bearer&expires_in=...` (при ошибке — `#error=...`). Токены передаются во fragment, поэтому не попадают в access-логи и на сервер фронтенда. Профиль вошедшего пользователя фронтенд получает через `GET /user/me` с заголовком `Authorization: Bearer <access_token>`.
+
+Настройка:
+
+1. В [Google Cloud Console](https://console.cloud.google.com/) создайте OAuth client (тип Web application) и в Authorized redirect URIs укажите `http://localhost:8080/realms/web-llm/broker/google/endpoint` (порт — `KEYCLOAK_PORT`).
+2. Client ID и Client Secret внесите в `identityProviders` в `keycloak/realm-web-llm.json` (или через админ-консоль: realm `web-llm` → Identity Providers → Google).
+3. Realm импортируется только при первом старте контейнера с пустой `keycloak-db`. Если realm уже существует, примените изменения в админ-консоли вручную (Standard flow + redirect URI у клиента, роль `user` в Default roles) либо пересоздайте volume: `docker compose down -v && docker compose up --build`.
+
 ### 4. Локальный запуск (без Docker)
 
 ```bash
@@ -146,8 +156,11 @@ app/
 | GET | `/health/ready` | Проверка готовности (включая БД) |
 | POST | `/user/register` | Регистрация пользователя (в Keycloak); сразу возвращает JWT сессии |
 | POST | `/user/login` | Вход; возвращает JWT сессии, выпущенный Keycloak |
+| GET | `/user/login/google` | Точка входа для кнопки «Войти через Google»: 302 на страницу входа Google (через Keycloak) |
+| GET | `/user/login/google/callback` | Callback от Keycloak: обмен кода на JWT и 302-редирект на фронтенд (`{FRONTEND_URL}/auth/callback`) с токенами или ошибкой во fragment; при первом входе создаёт локальный профиль |
 | POST | `/user/logout` | Выход из сессии; отзывает refresh-токен в Keycloak |
 | POST | `/user/subscription` | Оформление подписки (имитация): назначает роль `vip_user`; требует Bearer-токен |
+| GET | `/user/me` | Профиль текущего пользователя (по email из Bearer JWT) |
 | GET | `/user/{id}` | Получение пользователя |
 | POST | `/chat/send` | Отправка сообщения в чат; требует Bearer-токен с ролью `vip_user` или `admin` |
 

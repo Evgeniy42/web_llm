@@ -1,5 +1,6 @@
 """Моковые значения и фабрики для unit-тестов и интеграционных API-тестов."""
 
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from app.across_layers.entities.token_info import TokenInfo
@@ -27,6 +28,12 @@ ACCESS_TOKEN = "mock-access-token"
 REFRESH_TOKEN = "mock-refresh-token"
 TOKEN_TYPE = "Bearer"
 EXPIRES_IN = 3600
+
+# Значения для входа через Google (authorization code flow)
+GOOGLE_REDIRECT_URI = "http://localhost:8000/api/v1/user/login/google/callback"
+GOOGLE_IDP_ALIAS = "google"
+GOOGLE_AUTH_URL = "https://keycloak.test/realms/web-llm/protocol/openid-connect/auth"
+GOOGLE_AUTH_CODE = "mock-google-auth-code"
 
 # Значения для ChatService
 USER_MESSAGE = "Hello"
@@ -63,6 +70,8 @@ class MockKeycloakClient(KeycloakClientProtocol):
         self._revoked_refresh_tokens: set[str] = set()
         # access_token -> снимок полезной нагрузки на момент входа (как в JWT)
         self._access_tokens: dict[str, TokenPayload] = {}
+        # code -> email пользователя, вошедшего через Google (authorization code flow)
+        self._auth_codes: dict[str, str] = {}
 
     async def create_user(self, username: str, email: str, password: str) -> str:
         if email in self._users:
@@ -75,20 +84,53 @@ class MockKeycloakClient(KeycloakClientProtocol):
         user = self._users.get(email)
         if user is None or user["password"] != password:
             raise KeycloakInvalidCredentialsError("Keycloak отклонил логин или пароль")
-        refresh_token = f"{REFRESH_TOKEN}-{email}-{uuid4()}"
-        self._refresh_tokens.add(refresh_token)
-        access_token = f"{ACCESS_TOKEN}-{email}-{uuid4()}"
-        self._access_tokens[access_token] = TokenPayload(
-            sub=user["id"],
-            email=email,
-            roles=frozenset(user["roles"]),
-        )
-        return TokenInfo(
-            access_token=access_token,
-            token_type=TOKEN_TYPE,
-            expires_in=EXPIRES_IN,
-            refresh_token=refresh_token,
-        )
+        return self._issue_token(email, user)
+
+    def build_authorization_url(
+        self,
+        redirect_uri: str,
+        state: str,
+        idp_alias: str | None = None,
+    ) -> str:
+        query = {
+            "redirect_uri": redirect_uri,
+            "state": state,
+            "response_type": "code",
+        }
+        if idp_alias:
+            query["kc_idp_hint"] = idp_alias
+        return f"{GOOGLE_AUTH_URL}?{urlencode(query)}"
+
+    def add_google_user(self, email: str, full_name: str | None = None) -> str:
+        """Создаёт пользователя, как это делает брокер Google, и возвращает код авторизации.
+
+        Пароля у такого пользователя нет, базовая роль не назначена (в отличие от
+        create_user, который вызывает backend при регистрации). Если пользователь
+        с таким email уже существует — код привязывается к нему (вход через Google
+        в существующий аккаунт).
+
+        Args:
+            full_name: имя из профиля Google (claim name в выданном токене).
+
+        Returns:
+            Код авторизации для вызова callback'а (query-параметр code).
+        """
+        if email not in self._users:
+            self._users[email] = {
+                "id": str(uuid4()),
+                "password": None,
+                "roles": set(),
+                "full_name": full_name,
+            }
+        code = f"{GOOGLE_AUTH_CODE}-{uuid4()}"
+        self._auth_codes[code] = email
+        return code
+
+    async def exchange_code(self, code: str, redirect_uri: str) -> TokenInfo:
+        email = self._auth_codes.get(code)
+        if email is None:
+            raise KeycloakInvalidCredentialsError("Keycloak отклонил код авторизации")
+        return self._issue_token(email, self._users[email])
 
     async def logout(self, refresh_token: str) -> None:
         # Как настоящий Keycloak: повторный logout с отозванным токеном идемпотентен (204),
@@ -127,3 +169,22 @@ class MockKeycloakClient(KeycloakClientProtocol):
         self._refresh_tokens.clear()
         self._revoked_refresh_tokens.clear()
         self._access_tokens.clear()
+        self._auth_codes.clear()
+
+    def _issue_token(self, email: str, user: dict) -> TokenInfo:
+        """Выпускает токены сессии со снимком ролей пользователя (как JWT Keycloak)."""
+        refresh_token = f"{REFRESH_TOKEN}-{email}-{uuid4()}"
+        self._refresh_tokens.add(refresh_token)
+        access_token = f"{ACCESS_TOKEN}-{email}-{uuid4()}"
+        self._access_tokens[access_token] = TokenPayload(
+            sub=user["id"],
+            email=email,
+            roles=frozenset(user["roles"]),
+            full_name=user.get("full_name"),
+        )
+        return TokenInfo(
+            access_token=access_token,
+            token_type=TOKEN_TYPE,
+            expires_in=EXPIRES_IN,
+            refresh_token=refresh_token,
+        )

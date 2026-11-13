@@ -7,6 +7,7 @@ from app.application_layer.contracts.keycloak_protocol import KeycloakClientProt
 from app.application_layer.services.chat_service import ChatService
 from app.application_layer.services.user_service import UserService
 from app.configuration.database import DatabaseManager
+from app.configuration.settings import Settings
 from app.data_access_layer.repositories.mock_llm import MockLLM
 from app.data_access_layer.repositories.user_repository import UserRepository
 
@@ -37,8 +38,14 @@ class AppProvider(Provider):
         self,
         repository: UserRepository,
         keycloak: KeycloakClientProtocol,
+        settings: Settings,
     ) -> UserService:
-        return UserService(repository=repository, keycloak=keycloak)
+        return UserService(
+            repository=repository,
+            keycloak=keycloak,
+            google_redirect_uri=settings.google_redirect_uri,
+            google_idp_alias=settings.google_idp_alias,
+        )
 
     @provide
     def mock_llm(self) -> MockLLM:

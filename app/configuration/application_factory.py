@@ -63,6 +63,7 @@ def create_app(
             client_id=settings.keycloak_client_id,
             client_secret=settings.keycloak_client_secret,
             default_role=settings.keycloak_default_role,
+            public_url=settings.keycloak_public_url,
         )
 
     @asynccontextmanager
