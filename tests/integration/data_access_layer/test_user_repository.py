@@ -38,6 +38,20 @@ class TestUserRepository:
         assert found is not None
         assert found.email == TEST_USER_1[EMAIL_KEY]
 
+    async def test_get_user_by_keycloak_id(self, user_repo):
+        await user_repo.create_user(
+            username=TEST_USER_1[USERNAME_KEY],
+            email=TEST_USER_1[EMAIL_KEY],
+            keycloak_id=STUB_KEYCLOAK_ID_1,
+        )
+
+        found = await user_repo.get_user_by_keycloak_id(STUB_KEYCLOAK_ID_1)
+        assert found is not None
+        assert found.email == TEST_USER_1[EMAIL_KEY]
+
+    async def test_get_user_by_keycloak_id_not_found(self, user_repo):
+        assert await user_repo.get_user_by_keycloak_id(STUB_KEYCLOAK_ID_1) is None
+
     async def test_duplicate_username_allowed(self, user_repo):
         await user_repo.create_user(
             username=TEST_USER_1[USERNAME_KEY],

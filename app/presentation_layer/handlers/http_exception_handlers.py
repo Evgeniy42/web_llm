@@ -4,7 +4,6 @@ from fastapi.responses import JSONResponse
 from app.application_layer.contracts.keycloak_protocol import KeycloakError
 from app.application_layer.services.user_service import (
     InvalidCredentialsError,
-    UserAlreadyExistsError,
     UserNotFoundError,
 )
 
@@ -12,13 +11,6 @@ from app.application_layer.services.user_service import (
 async def user_not_found_handler(request: Request, exc: UserNotFoundError) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_404_NOT_FOUND,
-        content={"detail": str(exc)},
-    )
-
-
-async def user_already_exists_handler(request: Request, exc: UserAlreadyExistsError) -> JSONResponse:
-    return JSONResponse(
-        status_code=status.HTTP_409_CONFLICT,
         content={"detail": str(exc)},
     )
 
@@ -46,7 +38,6 @@ async def keycloak_error_handler(request: Request, exc: KeycloakError) -> JSONRe
 
 def setup_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(UserNotFoundError, user_not_found_handler)
-    app.add_exception_handler(UserAlreadyExistsError, user_already_exists_handler)
     app.add_exception_handler(InvalidCredentialsError, invalid_credentials_handler)
     app.add_exception_handler(KeycloakError, keycloak_error_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)

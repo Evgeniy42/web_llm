@@ -43,19 +43,32 @@ docker compose up --build
 
 Приложение будет доступно по адресу `http://localhost:8000`.
 Документация API: `http://localhost:8000/docs`.
-Админ-консоль Keycloak: `http://localhost:8080/admin` (логин/пароль — `KEYCLOAK_ADMIN`/`KEYCLOAK_ADMIN_PASSWORD` из `.env`).
+Админ-консоль Keycloak: `http://localhost:8080/admin` (логин/пароль — `KEYCLOAK_ADMIN`/`KEYCLOAK_ADMIN_PASSWORD` из `.env`; порт опубликован только на loopback).
 
-Регистрация и вход идут через backend: он создаёт пользователя и проверяет пароль в Keycloak, а клиенту возвращает JWT сессии. Клиент с Keycloak напрямую не общается.
+Регистрация и вход идут через страницу Keycloak: backend перенаправляет браузер на форму логина/регистрации Keycloak (authorization code flow + PKCE), а после входа создаёт сессию в HttpOnly-cookie. Пароли через backend не проходят, токены не попадают в URL и в JS фронтенда.
 
-### Вход через Google
+### Вход и регистрация
 
-Google подключён как Identity Provider в Keycloak (см. `identityProviders` в `keycloak/realm-web-llm.json`). Кнопка «Войти через Google» на клиенте — обычная ссылка на `GET /user/login/google`: браузер уходит в Keycloak → Google и возвращается на `GET /user/login/google/callback` с кодом, backend обменивает его на токены и делает 302-редирект на фронтенд: `{FRONTEND_URL}/auth/callback#access_token=...&refresh_token=...&token_type=Bearer&expires_in=...` (при ошибке — `#error=...`). Токены передаются во fragment, поэтому не попадают в access-логи и на сервер фронтенда. Профиль вошедшего пользователя фронтенд получает через `GET /user/me` с заголовком `Authorization: Bearer <access_token>`.
+Кнопки «Войти» и «Войти через Google» на клиенте — обычные ссылки:
 
-Настройка:
+1. `GET /api/v1/user/login` → 302 на страницу логина Keycloak (логин/пароль, там же ссылка на регистрацию).
+2. `GET /api/v1/user/login/google` → то же, но с `kc_idp_hint=google` — сразу форма Google.
+3. После входа Keycloak возвращает браузер на `GET /api/v1/user/login/callback` с кодом; backend проверяет `state`, обменивает код на токены (с PKCE-verifier из cookie), валидирует JWT, при первом входе создаёт локальный профиль и устанавливает сессионные cookie `access_token` и `refresh_token` (HttpOnly, SameSite=Lax).
+4. Браузер получает 302 на `{FRONTEND_URL}/auth/callback`: при успехе без параметров, при ошибке — с `#error=...`. Профиль и роли фронтенд получает через `GET /api/v1/user/me` (сессия определяется по cookie).
+
+Настройка Google-входа:
 
 1. В [Google Cloud Console](https://console.cloud.google.com/) создайте OAuth client (тип Web application) и в Authorized redirect URIs укажите `http://localhost:8080/realms/web-llm/broker/google/endpoint` (порт — `KEYCLOAK_PORT`).
-2. Client ID и Client Secret внесите в `identityProviders` в `keycloak/realm-web-llm.json` (или через админ-консоль: realm `web-llm` → Identity Providers → Google).
-3. Realm импортируется только при первом старте контейнера с пустой `keycloak-db`. Если realm уже существует, примените изменения в админ-консоли вручную (Standard flow + redirect URI у клиента, роль `user` в Default roles) либо пересоздайте volume: `docker compose down -v && docker compose up --build`.
+2. Client ID и Client Secret задайте в `.env` (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) — они подставляются в realm при импорте через плейсхолдеры `${...}` в `keycloak/realm-web-llm.json` (включается `JAVA_OPTS_APPEND=-Dkeycloak.migration.replace-placeholders=true` в docker-compose). Секреты в JSON не хранятся. Существующий realm можно обновить и через админ-консоль: realm `web-llm` → Identity Providers → Google.
+3. Realm импортируется только при первом старте контейнера с пустой `keycloak-db`: на существующей БД повторный импорт не срабатывает. Чтобы применить изменения `realm-web-llm.json` без потери данных приложения, обновите настройки в админ-консоли вручную либо пересоздайте ТОЛЬКО том Keycloak:
+
+```bash
+docker compose rm -sf keycloak keycloak-db
+docker volume rm web-llm_keycloak_postgres_data  # имя тома: docker volume ls
+docker compose up --build
+```
+
+`docker compose down -v` для этого НЕ используйте: он удалит и том PostgreSQL приложения.
 
 ### 4. Локальный запуск (без Docker)
 
@@ -138,15 +151,16 @@ app/
 ├── migrations/sql/         # SQL-миграции Flyway
 └── presentation_layer/     # HTTP-слой
     ├── dto/                # Pydantic DTO
-    ├── dependencies/       # Зависимости FastAPI (аутентификация по Bearer JWT, RBAC)
+    ├── dependencies/       # Зависимости FastAPI (аутентификация по cookie/Bearer JWT, RBAC)
     └── routers/            # FastAPI роутеры
 ```
 
 Аутентификация (Keycloak):
 
-- Realm `web-llm`, роли `user`/`vip_user`/`admin` и клиент `web-llm-backend` описаны в `keycloak/realm-web-llm.json` и импортируются при старте контейнера.
-- Пароли и роли хранятся только в Keycloak; таблица `user` хранит профиль и `keycloak_id`.
-- `POST /user/login` возвращает JWT сессии (`access_token`, `refresh_token`, `expires_in`), выпущенный Keycloak.
+- Realm `web-llm`, роли `user`/`vip_user`/`admin` и клиент `web-llm-backend` описаны в `keycloak/realm-web-llm.json` и импортируются при старте контейнера; секреты подставляются из переменных окружения (плейсхолдеры `${...}`).
+- Пароли и роли хранятся только в Keycloak; таблица `user` хранит профиль и `keycloak_id` (уникальный, поиск профиля — по `sub` из JWT).
+- Вход — authorization code flow + PKCE через страницу Keycloak; сессия — HttpOnly-cookie `access_token`/`refresh_token`. `Authorization: Bearer` тоже поддерживается (совместимость, тесты).
+- JWT валидируется строго: подпись RS256 по JWKS, аудитория `web-llm-api` (audience-маппер на клиенте `web-llm-backend` в realm — не client scope: импорт realm с собственной секцией `clientScopes` подавляет встроенные scope'ы `openid`/`profile`/`email` и ломает логин), тип `typ=Bearer`, обязательные claims `exp`/`iat`/`sub`, issuer.
 
 ## API Endpoints
 
@@ -154,20 +168,18 @@ app/
 |-------|------|----------|
 | GET | `/health` | Проверка жизни процесса |
 | GET | `/health/ready` | Проверка готовности (включая БД) |
-| POST | `/user/register` | Регистрация пользователя (в Keycloak); сразу возвращает JWT сессии |
-| POST | `/user/login` | Вход; возвращает JWT сессии, выпущенный Keycloak |
-| GET | `/user/login/google` | Точка входа для кнопки «Войти через Google»: 302 на страницу входа Google (через Keycloak) |
-| GET | `/user/login/google/callback` | Callback от Keycloak: обмен кода на JWT и 302-редирект на фронтенд (`{FRONTEND_URL}/auth/callback`) с токенами или ошибкой во fragment; при первом входе создаёт локальный профиль |
-| POST | `/user/logout` | Выход из сессии; отзывает refresh-токен в Keycloak |
-| POST | `/user/subscription` | Оформление подписки (имитация): назначает роль `vip_user`; требует Bearer-токен |
-| GET | `/user/me` | Профиль текущего пользователя (по email из Bearer JWT) |
-| GET | `/user/{id}` | Получение пользователя |
-| POST | `/chat/send` | Отправка сообщения в чат; требует Bearer-токен с ролью `vip_user` или `admin` |
+| GET | `/user/login` | 302 на страницу логина Keycloak (логин/пароль, ссылка на регистрацию); state и PKCE-verifier — в HttpOnly-cookie |
+| GET | `/user/login/google` | То же, но с `kc_idp_hint=google`: сразу форма входа Google |
+| GET | `/user/login/callback` | Единый callback от Keycloak: обмен кода на токены (PKCE), создание локального профиля при первом входе, сессионные cookie и 302 на `{FRONTEND_URL}/auth/callback` (при ошибке — `#error=...`) |
+| POST | `/user/logout` | Выход из сессии: отзывает refresh-токен (из cookie) в Keycloak и очищает cookie; всегда 204 |
+| POST | `/user/subscription` | Оформление подписки (имитация): назначает роль `vip_user`; требует сессию |
+| GET | `/user/me` | Профиль текущего пользователя и его роли: `{id, username, email, roles}`; 401 без валидной сессии |
+| POST | `/chat/send` | Отправка сообщения в чат; требует сессию с ролью `vip_user` или `admin` |
 
 ## RBAC
 
 Роли хранятся в Keycloak (realm `web-llm`): `user` — без подписки, `vip_user` — с подпиской, `admin` — администратор.
-Backend валидирует JWT из заголовка `Authorization: Bearer` (подпись RS256 по JWKS realm'а, issuer, срок действия) и читает роли из claim `realm_access.roles`:
+Backend валидирует JWT из cookie `access_token` или заголовка `Authorization: Bearer` (подпись RS256 по JWKS realm'а, аудитория, issuer, срок действия) и читает роли из claim `realm_access.roles`:
 
 - `/chat/send` доступен ролям `vip_user` и `admin`. Пользователь с ролью `user` получает `200` с сообщением чата «У вас нет подписки. Доступ к чату запрещен.» — фронтенд показывает его в диалоге.
 - `/user/subscription` — имитация оплаты подписки: назначает роль `vip_user` текущему пользователю (по `sub` из JWT). Роль попадёт в токен только после повторного входа — роли зашиты в выданный JWT снимком.

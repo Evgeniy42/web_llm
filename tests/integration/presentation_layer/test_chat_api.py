@@ -1,27 +1,46 @@
 from fastapi import status
 
 from tests.resources.api import (
-    ACCESS_TOKEN_KEY,
+    ACCESS_TOKEN_COOKIE,
+    CODE_KEY,
+    EMAIL_KEY,
+    LOGIN_CALLBACK_PATH,
     LOGIN_PATH,
     MESSAGE_KEY,
     NO_SUBSCRIPTION_MESSAGE,
-    REGISTER_PATH,
+    OAUTH_STATE_COOKIE,
     RESPONSE_KEY,
     SEND_MESSAGE_PATH,
+    STATE_KEY,
     SUBSCRIPTION_PATH,
+    USERNAME_KEY,
     bearer_headers,
 )
-from tests.resources.users import TEST_USER_1, login_payload
+from tests.resources.users import TEST_USER_1
 
 
-def _register_and_login(client) -> str:
-    """Регистрирует тестового пользователя и возвращает access-токен после повторного входа."""
-    client.post(REGISTER_PATH, json=TEST_USER_1)
-    login_response = client.post(LOGIN_PATH, json=login_payload(TEST_USER_1))
-    return login_response.json()[ACCESS_TOKEN_KEY]
+def _login(client, keycloak_mock) -> str:
+    """Логинит тестового пользователя через mock Keycloak и возвращает access-токен.
+
+    Полный флоу authorization code + PKCE: пользователь создан в моке
+    (страница Keycloak), backend обменивает код на токены в callback'е,
+    сессия устанавливается в cookie — токен читаем оттуда.
+    """
+    code = keycloak_mock.add_user_with_code(
+        TEST_USER_1[EMAIL_KEY], full_name=TEST_USER_1[USERNAME_KEY]
+    )
+    client.get(LOGIN_PATH, follow_redirects=False)
+    state = client.cookies.get(OAUTH_STATE_COOKIE)
+    response = client.get(
+        LOGIN_CALLBACK_PATH,
+        params={CODE_KEY: code, STATE_KEY: state},
+        follow_redirects=False,
+    )
+    assert response.status_code == status.HTTP_302_FOUND
+    return client.cookies.get(ACCESS_TOKEN_COOKIE)
 
 
-def _subscribe(client, access_token: str) -> str:
+def _subscribe(client, keycloak_mock, access_token: str) -> str:
     """Оформляет подписку и возвращает новый access-токен с ролью vip_user.
 
     Роль попадает в JWT снимком при входе, поэтому после назначения vip_user
@@ -31,13 +50,12 @@ def _subscribe(client, access_token: str) -> str:
     assert response.status_code == status.HTTP_200_OK
     assert MESSAGE_KEY in response.json()
 
-    login_response = client.post(LOGIN_PATH, json=login_payload(TEST_USER_1))
-    return login_response.json()[ACCESS_TOKEN_KEY]
+    return _login(client, keycloak_mock)
 
 
 class TestChatAPI:
-    def test_send_message_success_for_vip_user(self, client):
-        access_token = _subscribe(client, _register_and_login(client))
+    def test_send_message_success_for_vip_user(self, client, keycloak_mock):
+        access_token = _subscribe(client, keycloak_mock, _login(client, keycloak_mock))
 
         response = client.post(
             SEND_MESSAGE_PATH, json={"message": "Привет!"}, headers=bearer_headers(access_token)
@@ -48,8 +66,8 @@ class TestChatAPI:
         assert RESPONSE_KEY in data
         assert len(data[RESPONSE_KEY]) > 0
 
-    def test_send_message_denied_for_user_without_subscription(self, client):
-        access_token = _register_and_login(client)
+    def test_send_message_denied_for_user_without_subscription(self, client, keycloak_mock):
+        access_token = _login(client, keycloak_mock)
 
         response = client.post(
             SEND_MESSAGE_PATH, json={"message": "Привет!"}, headers=bearer_headers(access_token)
@@ -59,7 +77,7 @@ class TestChatAPI:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()[RESPONSE_KEY] == NO_SUBSCRIPTION_MESSAGE
 
-    def test_send_message_unauthorized_without_token(self, client):
+    def test_send_message_unauthorized_without_session(self, client):
         response = client.post(SEND_MESSAGE_PATH, json={"message": "Привет!"})
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -73,8 +91,8 @@ class TestChatAPI:
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_send_message_empty(self, client):
-        access_token = _subscribe(client, _register_and_login(client))
+    def test_send_message_empty(self, client, keycloak_mock):
+        access_token = _subscribe(client, keycloak_mock, _login(client, keycloak_mock))
 
         response = client.post(
             SEND_MESSAGE_PATH, json={"message": ""}, headers=bearer_headers(access_token)
@@ -84,16 +102,16 @@ class TestChatAPI:
 
 
 class TestSubscriptionAPI:
-    def test_subscribe_success(self, client):
-        access_token = _register_and_login(client)
+    def test_subscribe_success(self, client, keycloak_mock):
+        access_token = _login(client, keycloak_mock)
 
         response = client.post(SUBSCRIPTION_PATH, headers=bearer_headers(access_token))
 
         assert response.status_code == status.HTTP_200_OK
         assert MESSAGE_KEY in response.json()
 
-    def test_subscribe_grants_chat_access_only_after_relogin(self, client):
-        access_token = _register_and_login(client)
+    def test_subscribe_grants_chat_access_only_after_relogin(self, client, keycloak_mock):
+        access_token = _login(client, keycloak_mock)
         client.post(SUBSCRIPTION_PATH, headers=bearer_headers(access_token))
 
         # Роль зашита в выданный токен снимком: старый токен по-прежнему без подписки
@@ -103,13 +121,13 @@ class TestSubscriptionAPI:
         assert old_token_response.json()[RESPONSE_KEY] == NO_SUBSCRIPTION_MESSAGE
 
         # После повторного входа токен содержит vip_user, чат доступен
-        new_token = client.post(LOGIN_PATH, json=login_payload(TEST_USER_1)).json()[ACCESS_TOKEN_KEY]
+        new_token = _login(client, keycloak_mock)
         new_token_response = client.post(
             SEND_MESSAGE_PATH, json={"message": "Привет!"}, headers=bearer_headers(new_token)
         )
         assert new_token_response.status_code == status.HTTP_200_OK
 
-    def test_subscribe_unauthorized_without_token(self, client):
+    def test_subscribe_unauthorized_without_session(self, client):
         response = client.post(SUBSCRIPTION_PATH)
 
         assert response.status_code == status.HTTP_401_UNAUTHORIZED

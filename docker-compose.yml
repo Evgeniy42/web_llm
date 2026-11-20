@@ -41,8 +41,24 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_HEALTH_ENABLED: "true"
+      # Фиксированный публичный hostname: issuer всех токенов всегда
+      # http://localhost:8080/realms/web-llm независимо от адреса запроса.
+      # Без этого токены, выпущенные через браузерный (публичный) адрес,
+      # не отзываются через внутренний http://keycloak:8080 — Keycloak
+      # отклоняет logout: "Invalid token issuer".
+      KC_HOSTNAME: http://localhost:${KEYCLOAK_PORT:-8080}
+      # Запросы из docker-сети (backend -> http://keycloak:8080) идут с другим
+      # Host-заголовком; strict-проверка отклонила бы их, поэтому выключена
+      KC_HOSTNAME_STRICT: "false"
+      # Без replace-placeholders плейсхолдеры ${...} в realm при импорте НЕ подставляются
+      JAVA_OPTS_APPEND: "-Dkeycloak.migration.replace-placeholders=true"
+      # Секреты realm подставляются из окружения, а не хранятся в JSON в git
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
     ports:
-      - "${KEYCLOAK_PORT:-8080}:8080"
+      # Админка Keycloak доступна только с этого хоста (loopback)
+      - "127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"
     volumes:
       - ./keycloak/realm-web-llm.json:/opt/keycloak/data/import/realm-web-llm.json:ro
     depends_on:
@@ -73,20 +89,63 @@ services:
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-web-llm}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-web-llm-backend}
-      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-web-llm-backend-secret}
-      KEYCLOAK_DEFAULT_ROLE: ${KEYCLOAK_DEFAULT_ROLE:-user}
-      # Адрес Keycloak для браузера (вход через Google идёт редиректами)
+      # Без дефолта: приложение не стартует, если секрет не задан в .env
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?задайте KEYCLOAK_CLIENT_SECRET в .env}
+      # Адрес Keycloak для браузера (вход идёт редиректами через страницу Keycloak)
       KEYCLOAK_PUBLIC_URL: http://localhost:${KEYCLOAK_PORT:-8080}
-      # Адрес фронтенда для финального редиректа входа через Google
+      # Адрес фронтенда для финального редиректа входа (5173 — Vite dev, 8090 — фронт в Docker)
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
-      GOOGLE_REDIRECT_URI: http://localhost:${API_PORT:-8000}/api/v1/user/login/google/callback
+      # Единый callback входа (форма Keycloak и Google)
+      KEYCLOAK_REDIRECT_URI: http://localhost:${API_PORT:-8000}/api/v1/user/login/callback
       GOOGLE_IDP_ALIAS: ${GOOGLE_IDP_ALIAS:-google}
+      # Внутри docker-сети embedding-сервис доступен по имени сервиса
+      EMBEDDING_URL: http://embeddings:8080
     depends_on:
       db:
         condition: service_healthy
       keycloak:
         condition: service_healthy
 
+  # Qdrant: векторное хранилище для будущей RAG-системы
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # Embedding-сервис на llama.cpp: OpenAI-совместимый /v1/embeddings для Qwen3-Embedding.
+  # Модель читается из смонтированной папки (GGUF никуда не копируется).
+  embeddings:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    ports:
+      - "127.0.0.1:${EMBEDDING_PORT:-8081}:8080"
+    volumes:
+      - ./rag/emb_models:/models:ro
+    command:
+      - --model
+      - /models/Qwen3-Embedding-0.6B.i1-Q4_K_M.gguf
+      - --alias
+      - qwen3-embedding-0.6b
+      # Только эмбеддинги: /v1/embeddings и /embeddings, без completion-эндпоинтов
+      - --embeddings
+      # Qwen3-Embedding пулится последним токеном (по метаданным GGUF это тоже дефолт)
+      - --pooling
+      - last
+      # Контекст на один запрос: с запасом выше типичных чанков (512-1024 токена)
+      - --ctx-size
+      - "8192"
+      - --parallel
+      - "2"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
 volumes:
   web_llm_postgres_data:
   keycloak_postgres_data:
+  qdrant_data:

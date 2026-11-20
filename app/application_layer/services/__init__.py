@@ -1,6 +1,6 @@
 from app.application_layer.services.user_service import (
     InvalidCredentialsError,
-    UserAlreadyExistsError,
+    InvalidTokenError,
     UserNotFoundError,
     UserService,
 )
@@ -8,6 +8,6 @@ from app.application_layer.services.user_service import (
 __all__ = [
     "UserService",
     "UserNotFoundError",
-    "UserAlreadyExistsError",
     "InvalidCredentialsError",
+    "InvalidTokenError",
 ]

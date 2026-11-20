@@ -8,12 +8,8 @@ class KeycloakError(Exception):
     """Базовая ошибка обращения к Keycloak."""
 
 
-class KeycloakUserExistsError(KeycloakError):
-    """Пользователь с таким логином уже существует в Keycloak."""
-
-
 class KeycloakInvalidCredentialsError(KeycloakError):
-    """Keycloak отклонил пару логин/пароль."""
+    """Keycloak отклонил код авторизации или PKCE-verifier при обмене на токены."""
 
 
 class KeycloakInvalidTokenError(KeycloakError):
@@ -24,25 +20,22 @@ class KeycloakClientProtocol(Protocol):
     """Контракт взаимодействия с Keycloak.
 
     Keycloak — единственное хранилище паролей и ролей пользователей;
-    обращается к нему только серверная часть.
+    обращается к нему только серверная часть. Пароли через backend не
+    проходят: ввод логина/пароля и регистрация выполняются на странице
+    Keycloak (authorization code flow + PKCE).
     """
-
-    async def create_user(self, username: str, email: str, password: str) -> str: ...
-
-    async def authenticate(self, email: str, password: str) -> TokenInfo: ...
 
     def build_authorization_url(
         self,
         redirect_uri: str,
         state: str,
+        code_challenge: str,
         idp_alias: str | None = None,
     ) -> str: ...
 
-    async def exchange_code(self, code: str, redirect_uri: str) -> TokenInfo: ...
+    async def exchange_code(self, code: str, redirect_uri: str, code_verifier: str) -> TokenInfo: ...
 
     async def logout(self, refresh_token: str) -> None: ...
-
-    async def delete_user(self, keycloak_id: str) -> None: ...
 
     async def validate_token(self, access_token: str) -> TokenPayload: ...
 

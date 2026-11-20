@@ -1,7 +1,7 @@
 import logging
+import shutil
 import subprocess
 import sys
-import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,10 +11,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from app.application_layer.contracts.embedding_protocol import EmbeddingClientProtocol
 from app.application_layer.contracts.keycloak_protocol import KeycloakClientProtocol
 from app.configuration.container import AppProvider
 from app.configuration.database import DatabaseManager
 from app.configuration.settings import Settings
+from app.data_access_layer.embedding_client import EmbeddingClient
 from app.data_access_layer.keycloak_client import KeycloakClient
 from app.presentation_layer.handlers.http_exception_handlers import setup_exception_handlers
 
@@ -51,6 +53,7 @@ def run_migrations(settings: Settings) -> None:
 def create_app(
     settings: Settings | None = None,
     keycloak_client: KeycloakClientProtocol | None = None,
+    embedding_client: EmbeddingClientProtocol | None = None,
 ) -> FastAPI:
     if settings is None:
         settings = Settings()
@@ -62,8 +65,14 @@ def create_app(
             realm=settings.keycloak_realm,
             client_id=settings.keycloak_client_id,
             client_secret=settings.keycloak_client_secret,
-            default_role=settings.keycloak_default_role,
             public_url=settings.keycloak_public_url,
+            audience=settings.keycloak_api_audience,
+        )
+    if embedding_client is None:
+        embedding_client = EmbeddingClient(
+            base_url=settings.embedding_url,
+            model=settings.embedding_model,
+            expected_dim=settings.embedding_dim,
         )
 
     @asynccontextmanager
@@ -78,6 +87,7 @@ def create_app(
         finally:
             await db_manager.dispose()
             await keycloak_client.close()
+            await embedding_client.close()
 
     app = FastAPI(title="Web LLM", lifespan=lifespan)
 
@@ -105,6 +115,7 @@ def create_app(
             Settings: settings,
             DatabaseManager: db_manager,
             KeycloakClientProtocol: keycloak_client,
+            EmbeddingClientProtocol: embedding_client,
         },
     )
     setup_dishka(container, app)

@@ -1,5 +1,6 @@
 from advanced_alchemy.exceptions import NotFoundError
 from advanced_alchemy.repository import SQLAlchemyAsyncRepository
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.across_layers.entities.user_entity import UserEntity
@@ -25,12 +26,22 @@ class UserRepository(
         model = await self.get_one_or_none(id=user_id)
         return user_model_to_entity(model) if model else None
 
+    async def get_user_by_keycloak_id(self, keycloak_id: str) -> UserEntity | None:
+        model = await self.get_one_or_none(keycloak_id=keycloak_id)
+        return user_model_to_entity(model) if model else None
+
     async def create_user(self, username: str, email: str, keycloak_id: str) -> UserEntity:
         # Прямой flush через сессию: advanced-alchemy add() оборачивает ошибки БД
         # в собственные исключения, а контракт репозитория — sqlalchemy.exc.IntegrityError
         model = UserModel(username=username, email=email, keycloak_id=keycloak_id)
         self.session.add(model)
-        await self.session.flush()
+        try:
+            await self.session.flush()
+        except IntegrityError:
+            # Откатываем транзакцию, чтобы сессия осталась рабочей: сервис
+            # повторно прочитает профиль (идемпотентность первого входа)
+            await self.session.rollback()
+            raise
         await self.session.refresh(model)
         return user_model_to_entity(model)
 

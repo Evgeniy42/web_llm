@@ -75,6 +75,8 @@ def app(test_settings, keycloak_mock):
         db_name=url.database or "",
         db_host=url.host or "localhost",
         db_port=url.port or 5432,
+        # Секрет обязателен (дефолта в Settings нет); Keycloak в тестах заменён моком
+        keycloak_client_secret="integration-test-secret",
     )
     application = create_app(settings, keycloak_client=keycloak_mock)
     yield application

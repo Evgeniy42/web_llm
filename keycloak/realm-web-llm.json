@@ -2,7 +2,7 @@
   "realm": "web-llm",
   "displayName": "Web LLM",
   "enabled": true,
-  "registrationAllowed": false,
+  "registrationAllowed": true,
   "registrationEmailAsUsername": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
@@ -38,22 +38,37 @@
     {
       "clientId": "web-llm-backend",
       "name": "Web LLM Backend",
-      "description": "Серверная часть: вход по паролю (direct access grants), вход через Google (standard flow: браузер уходит в Keycloak и возвращается с кодом на callback backend'а) и управление пользователями (service account).",
+      "description": "Серверная часть: вход через страницу Keycloak и Google (authorization code flow + PKCE, callback на backend) и управление ролями (service account). Пароли через backend не проходят.",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,
       "clientAuthenticatorType": "client-secret",
-      "secret": "web-llm-backend-secret",
+      "secret": "${KEYCLOAK_CLIENT_SECRET}",
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": true,
       "authorizationServicesEnabled": false,
       "fullScopeAllowed": true,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
       "redirectUris": [
-        "http://localhost:8000/api/v1/user/login/google/callback"
+        "http://localhost:8000/api/v1/user/login/callback"
       ],
       "webOrigins": ["+"],
+      "protocolMappers": [
+        {
+          "name": "web-llm-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "web-llm-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
       "defaultClientScopes": ["web-origins", "profile", "email", "roles", "basic"],
       "optionalClientScopes": ["kc-admin-api"]
     }
@@ -66,8 +81,8 @@
       "enabled": true,
       "trustEmail": true,
       "config": {
-        "clientId": "ЗАПОЛНИТЬ: Client ID из Google Cloud Console",
-        "clientSecret": "ЗАПОЛНИТЬ: Client Secret из Google Cloud Console",
+        "clientId": "${GOOGLE_CLIENT_ID}",
+        "clientSecret": "${GOOGLE_CLIENT_SECRET}",
         "useJwksUrl": "true"
       }
     }

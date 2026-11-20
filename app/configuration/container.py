@@ -3,8 +3,10 @@ from collections.abc import AsyncIterator
 from dishka import Provider, Scope, provide
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application_layer.contracts.embedding_protocol import EmbeddingClientProtocol
 from app.application_layer.contracts.keycloak_protocol import KeycloakClientProtocol
 from app.application_layer.services.chat_service import ChatService
+from app.application_layer.services.embedding_service import EmbeddingService
 from app.application_layer.services.user_service import UserService
 from app.configuration.database import DatabaseManager
 from app.configuration.settings import Settings
@@ -17,6 +19,10 @@ class AppProvider(Provider):
 
     # Settings, DatabaseManager и KeycloakClientProtocol поставляются в контейнер
     # через context из app.configuration.application_factory.create_app
+
+    @provide
+    def embedding_service(self, client: EmbeddingClientProtocol) -> EmbeddingService:
+        return EmbeddingService(client)
 
     @provide
     async def db_session(self, db_manager: DatabaseManager) -> AsyncIterator[AsyncSession]:
@@ -43,7 +49,7 @@ class AppProvider(Provider):
         return UserService(
             repository=repository,
             keycloak=keycloak,
-            google_redirect_uri=settings.google_redirect_uri,
+            redirect_uri=settings.keycloak_redirect_uri,
             google_idp_alias=settings.google_idp_alias,
         )
 

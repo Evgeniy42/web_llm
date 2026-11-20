@@ -11,7 +11,6 @@ from app.application_layer.contracts.keycloak_protocol import (
     KeycloakError,
     KeycloakInvalidCredentialsError,
     KeycloakInvalidTokenError,
-    KeycloakUserExistsError,
 )
 
 # Запас до истечения сервисного токена, чтобы не уйти в запрос с почти протухшим токеном
@@ -19,11 +18,12 @@ _TOKEN_EXPIRY_MARGIN_SECONDS = 10
 
 
 class KeycloakClient(KeycloakClientProtocol):
-    """HTTP-клиент Keycloak: Admin REST API управляет пользователями, OIDC token endpoint выполняет вход.
+    """HTTP-клиент Keycloak: OIDC authorization code flow (PKCE) и Admin REST API для ролей.
 
-    Пароль пользователя за пределы Keycloak не сохраняется: при регистрации он
-    передаётся в credentials пользователя, при входе — в grant password, и по
-    ответу Keycloak выдаётся JWT сессии.
+    Пароли пользователей через backend не проходят: ввод логина/пароля и
+    регистрация выполняются на странице Keycloak, а backend лишь строит
+    authorization URL, обменивает код на токены (с PKCE-verifier) и
+    валидирует выпущенные JWT.
     """
 
     def __init__(
@@ -32,14 +32,16 @@ class KeycloakClient(KeycloakClientProtocol):
         realm: str,
         client_id: str,
         client_secret: str,
-        default_role: str = "user",
         public_url: str | None = None,
+        audience: str = "web-llm-api",
         timeout: float = 10.0,
     ) -> None:
         self._realm = realm
         self._client_id = client_id
         self._client_secret = client_secret
-        self._default_role = default_role
+        # Аудитория, которой должен быть выпущен access-токен (claim aud);
+        # добавляется в токен client scope'ом web-llm-api (oidc-audience-mapper в realm)
+        self._audience = audience
         # Публичный адрес для редиректов браузера: base_url может указывать
         # во внутреннюю docker-сеть (http://keycloak:8080), недоступную снаружи
         self._public_url = (public_url or base_url).rstrip("/")
@@ -49,77 +51,14 @@ class KeycloakClient(KeycloakClientProtocol):
         # JWKS realm'а: публичные ключи для проверки подписи JWT, кешируются
         self._jwks: dict | None = None
 
-    async def create_user(self, username: str, email: str, password: str) -> str:
-        """Создаёт пользователя в Keycloak с паролем и realm-ролью по умолчанию.
-
-        Returns:
-            Идентификатор созданного пользователя в Keycloak (UUID).
-
-        Raises:
-            KeycloakUserExistsError: пользователь с таким email уже существует.
-            KeycloakError: Keycloak вернул ошибку или недоступен.
-        """
-        response = await self._client.post(
-            f"/admin/realms/{self._realm}/users",
-            headers=await self._admin_headers(),
-            json={
-                # Логином в Keycloak служит email (registrationEmailAsUsername в realm)
-                "username": email,
-                "email": email,
-                "enabled": True,
-                "emailVerified": True,
-                # firstName/lastName обязательны в user profile Keycloak 26:
-                # без них при входе срабатывает required action VERIFY_PROFILE
-                "firstName": username,
-                "lastName": username,
-                "credentials": [{"type": "password", "value": password, "temporary": False}],
-            },
-        )
-        if response.status_code == 409:
-            raise KeycloakUserExistsError(f"Пользователь с email '{email}' уже существует в Keycloak")
-        if response.status_code != 201:
-            raise KeycloakError(
-                f"Keycloak не создал пользователя: HTTP {response.status_code}: {response.text}"
-            )
-
-        keycloak_id = response.headers["Location"].rstrip("/").rsplit("/", 1)[-1]
-        await self._assign_realm_role(keycloak_id, self._default_role)
-        return keycloak_id
-
-    async def authenticate(self, email: str, password: str) -> TokenInfo:
-        """Проверяет логин/пароль через grant password и возвращает токены Keycloak.
-
-        Raises:
-            KeycloakInvalidCredentialsError: пара логин/пароль отклонена.
-            KeycloakError: Keycloak вернул ошибку или недоступен.
-        """
-        response = await self._client.post(
-            f"/realms/{self._realm}/protocol/openid-connect/token",
-            data={
-                "grant_type": "password",
-                "client_id": self._client_id,
-                "client_secret": self._client_secret,
-                "username": email,
-                "password": password,
-            },
-        )
-        # Keycloak отвечает 400 (invalid_grant) или 401 на неверную пару логин/пароль
-        if response.status_code in (400, 401):
-            raise KeycloakInvalidCredentialsError("Keycloak отклонил логин или пароль")
-        if response.status_code != 200:
-            raise KeycloakError(
-                f"Keycloak не выдал токен: HTTP {response.status_code}: {response.text}"
-            )
-
-        return self._to_token_info(response.json())
-
     def build_authorization_url(
         self,
         redirect_uri: str,
         state: str,
+        code_challenge: str,
         idp_alias: str | None = None,
     ) -> str:
-        """Строит URL страницы входа Keycloak для браузера (authorization code flow).
+        """Строит URL страницы входа Keycloak для браузера (authorization code flow + PKCE).
 
         URL формируется от public_url: браузер не имеет доступа к внутреннему
         адресу Keycloak в docker-сети. redirect_uri должен быть внесён в
@@ -128,6 +67,8 @@ class KeycloakClient(KeycloakClientProtocol):
         Args:
             redirect_uri: эндпоинт backend'а, куда Keycloak вернёт браузер с кодом.
             state: случайная строка защиты от CSRF; возвращается в callback без изменений.
+            code_challenge: PKCE-челлендж (base64url(sha256(verifier)), метод S256);
+                verifier хранится у backend'а и передаётся при обмене кода на токены.
             idp_alias: alias identity provider'а (kc_idp_hint) — Keycloak сразу
                 перенаправляет на форму входа соцсети, минуя собственную страницу логина.
 
@@ -140,29 +81,34 @@ class KeycloakClient(KeycloakClientProtocol):
             "response_type": "code",
             "scope": "openid profile email",
             "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
         }
         if idp_alias:
             query["kc_idp_hint"] = idp_alias
         base = f"{self._public_url}/realms/{self._realm}/protocol/openid-connect/auth"
         return f"{base}?{urlencode(query)}"
 
-    async def exchange_code(self, code: str, redirect_uri: str) -> TokenInfo:
-        """Обменивает код авторизации на токены сессии (authorization code flow).
+    async def exchange_code(self, code: str, redirect_uri: str, code_verifier: str) -> TokenInfo:
+        """Обменивает код авторизации на токены сессии (authorization code flow + PKCE).
 
-        Код выдаёт Keycloak после входа пользователя через identity provider
-        (например, Google) и возврата браузера на redirect_uri backend'а.
+        Код выдаёт Keycloak после входа пользователя (форма Keycloak или
+        identity provider, например Google) и возврата браузера на
+        redirect_uri backend'а.
 
         Args:
             code: код авторизации из query-параметра callback'а.
             redirect_uri: тот же redirect_uri, что был в запросе авторизации,
                 иначе Keycloak отклонит обмен.
+            code_verifier: PKCE-verifier из cookie попытки входа; Keycloak сверит
+                его хеш с code_challenge из запроса авторизации.
 
         Returns:
             Токены сессии, выпущенные Keycloak.
 
         Raises:
             KeycloakInvalidCredentialsError: код отклонён (истёк, уже использован,
-                не совпал redirect_uri).
+                не совпал redirect_uri или PKCE-verifier).
             KeycloakError: Keycloak вернул ошибку или недоступен.
         """
         response = await self._client.post(
@@ -173,10 +119,11 @@ class KeycloakClient(KeycloakClientProtocol):
                 "client_secret": self._client_secret,
                 "code": code,
                 "redirect_uri": redirect_uri,
+                "code_verifier": code_verifier,
             },
         )
-        # Код одноразовый и короткоживущий: повторное использование и истечение
-        # Keycloak отклоняет как invalid_grant (400)
+        # Код одноразовый и короткоживущий: повторное использование, истечение,
+        # неверный redirect_uri и чужой code_verifier Keycloak отклоняет как invalid_grant (400)
         if response.status_code in (400, 401):
             raise KeycloakInvalidCredentialsError("Keycloak отклонил код авторизации")
         if response.status_code != 200:
@@ -212,17 +159,6 @@ class KeycloakClient(KeycloakClientProtocol):
                 f"Keycloak не выполнил logout: HTTP {response.status_code}: {response.text}"
             )
 
-    async def delete_user(self, keycloak_id: str) -> None:
-        """Удаляет пользователя из Keycloak (компенсация при откате регистрации)."""
-        response = await self._client.delete(
-            f"/admin/realms/{self._realm}/users/{keycloak_id}",
-            headers=await self._admin_headers(),
-        )
-        if response.status_code not in (204, 404):
-            raise KeycloakError(
-                f"Keycloak не удалил пользователя {keycloak_id}: HTTP {response.status_code}: {response.text}"
-            )
-
     async def assign_role(self, keycloak_id: str, role_name: str) -> None:
         """Назначает пользователю realm-роль Keycloak.
 
@@ -242,10 +178,13 @@ class KeycloakClient(KeycloakClientProtocol):
         """Проверяет JWT доступа и возвращает его полезную нагрузку.
 
         Подпись проверяется по JWKS realm'а (RS256, ключи кешируются и
-        перечитываются при неизвестном kid — ротация ключей), срок действия —
-        стандартной валидацией PyJWT. Issuer сверяется вручную с двумя
-        допустимыми адресами (внутренний base_url и публичный public_url).
-        Роли извлекаются из claim `realm_access.roles`.
+        перечитываются при неизвестном kid — ротация ключей). Аудитория (aud)
+        обязана содержать аудиторию Web LLM API: backend не принимает токены,
+        выпущенные для других клиентов/сервисов. Claims exp, iat и sub
+        обязательны, typ обязан быть "Bearer" — этим отсекаются refresh- и
+        id-токены. Issuer сверяется вручную с двумя допустимыми адресами
+        (внутренний base_url и публичный public_url). Роли извлекаются из
+        claim `realm_access.roles`.
 
         Args:
             access_token: JWT доступа, полученный клиентом при входе.
@@ -254,7 +193,8 @@ class KeycloakClient(KeycloakClientProtocol):
             Идентификатор пользователя, email и набор realm-ролей из токена.
 
         Raises:
-            KeycloakInvalidTokenError: токен битый, истёк или подпись не сошлась.
+            KeycloakInvalidTokenError: токен битый, истёк, выпущен не для нашего
+                API или подпись не сошлась.
             KeycloakError: Keycloak недоступен (не удалось получить JWKS).
         """
         try:
@@ -268,16 +208,21 @@ class KeycloakClient(KeycloakClientProtocol):
                 access_token,
                 key=key,
                 algorithms=["RS256"],
-                # Аудитория не проверяется: токен выдаётся нашему же клиенту web-llm-backend.
-                # Issuer проверяется вручную ниже — валидных значений два (см. комментарий)
-                options={"verify_aud": False, "verify_iss": False},
+                audience=self._audience,
+                # exp/iat/sub обязательны; issuer проверяется вручную ниже —
+                # валидных значений два (см. комментарий)
+                options={"require": ["exp", "iat", "sub"], "verify_iss": False},
             )
         except jwt.PyJWTError as e:
             raise KeycloakInvalidTokenError("Токен недействителен или истёк") from e
 
-        # Keycloak формирует iss по адресу, на который пришёл запрос: вход по паролю
-        # идёт из docker-сети (base_url), браузерный вход через Google — через
-        # публичный адрес (public_url). Оба issuer'а наши, принимаем оба.
+        # Принимаем только access-токены: у refresh/id-токенов Keycloak typ иной
+        if payload.get("typ") != "Bearer":
+            raise KeycloakInvalidTokenError("Токен недействителен или истёк")
+
+        # Keycloak формирует iss по адресу, на который пришёл запрос: обмен кода
+        # идёт из docker-сети (base_url), а issuer браузерного входа — публичный
+        # адрес (public_url). Оба issuer'а наши, принимаем оба.
         expected_issuers = {
             f"{self._client.base_url}/realms/{self._realm}",
             f"{self._public_url}/realms/{self._realm}",
@@ -285,14 +230,8 @@ class KeycloakClient(KeycloakClientProtocol):
         if payload.get("iss") not in expected_issuers:
             raise KeycloakInvalidTokenError("Токен недействителен или истёк")
 
-        # sub добавляется client scope "basic" (oidc-sub-mapper) — без него
-        # токен не идентифицирует пользователя и для нас недействителен
-        sub = payload.get("sub")
-        if not sub:
-            raise KeycloakInvalidTokenError("В токене нет sub: идентификатор пользователя отсутствует")
-
         return TokenPayload(
-            sub=sub,
+            sub=payload["sub"],
             email=payload.get("email"),
             roles=frozenset(payload.get("realm_access", {}).get("roles", [])),
             # Имя из профиля Google (брокерский вход); при входе по паролю отсутствует

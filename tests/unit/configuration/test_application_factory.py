@@ -20,6 +20,8 @@ def test_settings():
         db_name="web_llm_unit",
         db_host="localhost",
         db_port=5432,
+        # Секрет обязателен (дефолта в Settings нет)
+        keycloak_client_secret="unit-test-secret",
     )
 
 
