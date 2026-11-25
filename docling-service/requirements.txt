@@ -1,0 +1,8 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+fastapi>=0.115.0,<0.116.0
+uvicorn>=0.30.0,<0.31.0
+python-multipart>=0.0.9,<1.0.0
+docling>=2.151.0,<3.0.0
+torch
+torchvision

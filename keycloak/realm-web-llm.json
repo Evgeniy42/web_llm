@@ -1,0 +1,100 @@
+{
+  "realm": "web-llm",
+  "displayName": "Web LLM",
+  "enabled": true,
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "verifyEmail": false,
+  "accessTokenLifespan": 3600,
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "Пользователь чата: базовый доступ к приложению, без подписки чат запрещён"
+      },
+      {
+        "name": "vip_user",
+        "description": "Пользователь с подпиской: доступ к чату"
+      },
+      {
+        "name": "admin",
+        "description": "Администратор системы"
+      }
+    ]
+  },
+  "defaultRole": {
+    "name": "default-roles-web-llm",
+    "description": "Роли по умолчанию: user получают все новые пользователи, в т.ч. созданные брокером Google (он проходит мимо backend'а)",
+    "composite": true,
+    "clientRole": false,
+    "composites": {
+      "realm": ["user"]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "web-llm-backend",
+      "name": "Web LLM Backend",
+      "description": "Серверная часть: вход через страницу Keycloak и Google (authorization code flow + PKCE, callback на backend) и управление ролями (service account). Пароли через backend не проходят.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KEYCLOAK_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true,
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "redirectUris": [
+        "http://localhost:8000/api/v1/user/login/callback"
+      ],
+      "webOrigins": ["+"],
+      "protocolMappers": [
+        {
+          "name": "web-llm-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "web-llm-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ],
+      "defaultClientScopes": ["web-origins", "profile", "email", "roles", "basic"],
+      "optionalClientScopes": ["kc-admin-api"]
+    }
+  ],
+  "identityProviders": [
+    {
+      "alias": "google",
+      "displayName": "Google",
+      "providerId": "google",
+      "enabled": true,
+      "trustEmail": true,
+      "config": {
+        "clientId": "${GOOGLE_CLIENT_ID}",
+        "clientSecret": "${GOOGLE_CLIENT_SECRET}",
+        "useJwksUrl": "true"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-web-llm-backend",
+      "enabled": true,
+      "serviceAccountClientId": "web-llm-backend",
+      "clientRoles": {
+        "realm-management": ["manage-users", "view-users", "view-realm"]
+      }
+    }
+  ]
+}

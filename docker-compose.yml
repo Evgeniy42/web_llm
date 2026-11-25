@@ -1,0 +1,207 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - web_llm_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  keycloak-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      POSTGRES_DB: ${KEYCLOAK_DB_NAME:-keycloak}
+    volumes:
+      - keycloak_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${KEYCLOAK_DB_USER:-keycloak}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    # start-dev: HTTP без TLS для локальной разработки; realm импортируется из keycloak/realm-web-llm.json
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HEALTH_ENABLED: "true"
+      # Фиксированный публичный hostname: issuer всех токенов всегда
+      # http://localhost:8080/realms/web-llm независимо от адреса запроса.
+      # Без этого токены, выпущенные через браузерный (публичный) адрес,
+      # не отзываются через внутренний http://keycloak:8080 — Keycloak
+      # отклоняет logout: "Invalid token issuer".
+      KC_HOSTNAME: http://localhost:${KEYCLOAK_PORT:-8080}
+      # Запросы из docker-сети (backend -> http://keycloak:8080) идут с другим
+      # Host-заголовком; strict-проверка отклонила бы их, поэтому выключена
+      KC_HOSTNAME_STRICT: "false"
+      # Без replace-placeholders плейсхолдеры ${...} в realm при импорте НЕ подставляются
+      JAVA_OPTS_APPEND: "-Dkeycloak.migration.replace-placeholders=true"
+      # Секреты realm подставляются из окружения, а не хранятся в JSON в git
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+    ports:
+      # Админка Keycloak доступна только с этого хоста (loopback)
+      - "127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"
+    volumes:
+      - ./keycloak/realm-web-llm.json:/opt/keycloak/data/import/realm-web-llm.json:ro
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      # В образе нет curl: проверяем /health/ready на management-порту через bash /dev/tcp
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3 && grep -q '200' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  app:
+    build: .
+    # Встроенный DNS Docker Desktop периодически теряет внешние имена
+    # (видели на hf/modelscope) — для исходящих вызовов (AItunnel) задаём
+    # резолверы явно, в обход хостового резолвера
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg_async://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_HOST: db
+      DB_PORT: 5432
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      # Keycloak доступен только внутри docker-сети: клиент с ним напрямую не общается
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-web-llm}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-web-llm-backend}
+      # Без дефолта: приложение не стартует, если секрет не задан в .env
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?задайте KEYCLOAK_CLIENT_SECRET в .env}
+      # Адрес Keycloak для браузера (вход идёт редиректами через страницу Keycloak)
+      KEYCLOAK_PUBLIC_URL: http://localhost:${KEYCLOAK_PORT:-8080}
+      # Адрес фронтенда для финального редиректа входа (5173 — Vite dev, 8090 — фронт в Docker)
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      # Единый callback входа (форма Keycloak и Google)
+      KEYCLOAK_REDIRECT_URI: http://localhost:${API_PORT:-8000}/api/v1/user/login/callback
+      GOOGLE_IDP_ALIAS: ${GOOGLE_IDP_ALIAS:-google}
+      # Внутри docker-сети embedding-сервис доступен по имени сервиса
+      EMBEDDING_URL: http://embeddings:8080
+      # Внутри docker-сети Qdrant доступен по имени сервиса
+      QDRANT_URL: http://qdrant:6333
+      # Внутренний микросервис конвертации документов (порт не публикуется)
+      DOCLING_SERVICE_URL: http://docling-service:8082
+      # Генеративная модель через туннель AItunnel (OpenAI-совместимый API).
+      # Без дефолта: приложение не стартует, если токен не задан в .env
+      LLM_API_KEY: ${LLM_API_KEY:?задайте LLM_API_KEY в .env}
+    depends_on:
+      db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+      docling-service:
+        condition: service_healthy
+
+  # Qdrant: векторное хранилище для будущей RAG-системы
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "${QDRANT_HTTP_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && printf \"GET /healthz HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q \"200\" <&3'"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  # Embedding-сервис на llama.cpp: OpenAI-совместимый /v1/embeddings для Qwen3-Embedding.
+  # Модель читается из смонтированной папки (GGUF никуда не копируется).
+  # server-cuda: GTX 1660 6GB — модель 0.6B (~500MB в Q4_K_M) целиком уходит в VRAM.
+  embeddings:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    ports:
+      - "127.0.0.1:${EMBEDDING_PORT:-8081}:8080"
+    volumes:
+      - ./rag/emb_models:/models:ro
+    # Резервируем GPU для контейнера: без этого llama-server не видит CUDA
+    # (проверено: docker run --gpus all nvidia/cuda ... nvidia-smi -L работает)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - --model
+      - /models/Qwen3-Embedding-0.6B.i1-Q4_K_M.gguf
+      - --alias
+      - qwen3-embedding-0.6b
+      # Только эмбеддинги: /v1/embeddings и /embeddings, без completion-эндпоинтов
+      - --embeddings
+      # Все слои модели в VRAM; без флага сервер работал бы на CPU даже в CUDA-образе
+      - --n-gpu-layers
+      - "999"
+      # Qwen3-Embedding пулится последним токеном (по метаданным GGUF это тоже дефолт)
+      - --pooling
+      - last
+      # Контекст на один запрос: с запасом выше типичных чанков (512-1024 токена)
+      - --ctx-size
+      - "8192"
+      - --parallel
+      - "2"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  # docling-service: внутренний микросервис конвертации документов в Markdown.
+  # Порт НЕ публикуется: доступен только app внутри docker-сети.
+  docling-service:
+    build: ./docling-service
+    environment:
+      # Веса ML-моделей docling кешируются в volume (не скачиваются заново
+      # при пересоздании контейнера)
+      DOCLING_ARTIFACTS_PATH: /models
+    volumes:
+      - docling_models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8082/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+
+volumes:
+  web_llm_postgres_data:
+  keycloak_postgres_data:
+  qdrant_data:
+  docling_models:
