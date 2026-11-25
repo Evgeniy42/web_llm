@@ -44,3 +44,6 @@ htmlcov/
 
 # agent
 .agents
+
+# emb_model
+rag/emb_models/Qwen3-Embedding-0.6B.i1-Q4_K_M.gguf

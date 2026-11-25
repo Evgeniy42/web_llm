@@ -1,3 +1,4 @@
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,3 +43,34 @@ class Settings(BaseSettings):
     # Размерность вектора Qwen3-Embedding-0.6B: используется при создании
     # коллекции в Qdrant (этап 2) и для самопроверки ответа сервиса
     embedding_dim: int = 1024
+    # Qdrant (REST API). Для app в docker-compose переопределяется на http://qdrant:6333
+    qdrant_url: str = "http://localhost:6333"
+    # Имя коллекции чанков документов
+    qdrant_collection: str = "rag_chunks"
+    # Внутренний микросервис конвертации документов (docling-service).
+    # Порт не публикуется наружу; в docker-compose переопределяется на
+    # http://docling-service:8082
+    docling_service_url: str = "http://localhost:8082"
+    # Чанкинг Markdown (этап 4). Токены считает настоящий токенайзер модели
+    # (/tokenize llama-server), поэтому min/max — в токенах модели.
+    # min_tokens — цель (короткий раздел не растягивается чужим текстом),
+    # max_tokens — жёсткий предел. overlap_ratio — перекрытие соседних
+    # чанков, доля от длины предыдущего чанка (плановые 10–15%).
+    rag_chunk_min_tokens: int = Field(default=300, ge=50)
+    rag_chunk_max_tokens: int = Field(default=800, ge=100)
+    rag_chunk_overlap_ratio: float = Field(default=0.12, gt=0.0, le=0.5)
+    # Векторный поиск чанков (этап 5): сколько ближайших чанков берётся
+    # в контекст по умолчанию (можно переопределить per-request).
+    rag_search_top_k: int = Field(default=5, ge=1, le=50)
+    # Генеративная модель (этап 6): OpenAI-совместимый API через туннель AItunnel.
+    # Токен берётся из .env (LLM_API_KEY); без него клиент не создаётся —
+    # впишите свой токен с https://aitunnel.ru.
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.aitunnel.ru/v1/"
+    llm_model: str = "~z-ai/glm-latest"
+
+    @model_validator(mode="after")
+    def _check_chunk_bounds(self) -> "Settings":
+        if self.rag_chunk_min_tokens >= self.rag_chunk_max_tokens:
+            raise ValueError("rag_chunk_min_tokens должно быть меньше rag_chunk_max_tokens")
+        return self

@@ -7,7 +7,7 @@ from fastapi import Depends, Header, HTTPException, Request, status
 
 from app.across_layers.entities.token_payload import TokenPayload
 from app.across_layers.roles import ROLE_ADMIN, ROLE_VIP_USER
-from app.application_layer.contracts.keycloak_protocol import (
+from app.application_layer.contracts.client_contracts.keycloak_protocol import (
     KeycloakClientProtocol,
     KeycloakInvalidTokenError,
 )

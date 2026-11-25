@@ -2,7 +2,7 @@ import logging
 
 import httpx
 
-from app.application_layer.contracts.embedding_protocol import EmbeddingError
+from app.application_layer.contracts.client_contracts.embedding_protocol import EmbeddingError
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +62,49 @@ class EmbeddingClient:
         """Возвращает вектор одного текста."""
         return (await self.embed([text]))[0]
 
+    async def tokenize(self, text: str) -> list[int]:
+        """Разбивает текст на id-токены модели (эндпоинт /tokenize).
+
+        Используется чанкером этапа 4: токенайзер совпадает с токенайзером
+        эмбеддинг-модели, поэтому ограничения чанка (min/max токенов)
+        считаются в том пространстве, в котором модель читает текст.
+
+        Raises:
+            EmbeddingError: сервис недоступен или вернул ошибку.
+        """
+        payload = await self._post_llama_endpoint("/tokenize", {"content": text})
+        return list(payload["tokens"])
+
+    async def detokenize(self, tokens: list[int]) -> str:
+        """Собирает id-токены обратно в текст (эндпоинт /detokenize).
+
+        Raises:
+            EmbeddingError: сервис недоступен или вернул ошибку.
+        """
+        payload = await self._post_llama_endpoint("/detokenize", {"tokens": tokens})
+        return str(payload["content"])
+
     async def close(self) -> None:
         """Закрывает HTTP-клиент и освобождает соединения."""
         await self._client.aclose()
+
+    async def _post_llama_endpoint(self, path: str, body: dict) -> dict:
+        """POST в низкоуровневый эндпоинт llama-server (/tokenize, /detokenize).
+
+        Эти эндпоинты не OpenAI-совместимые, поэтому отделены от /v1/embeddings:
+        та же обработка сетевых и HTTP-ошибок, но без проверки размерности.
+        """
+        try:
+            response = await self._client.post(path, json=body)
+        except httpx.HTTPError as e:
+            raise EmbeddingError(f"Embedding-сервис недоступен: {e}") from e
+
+        if response.status_code != 200:
+            raise EmbeddingError(
+                f"Embedding-сервис вернул HTTP {response.status_code} на {path}: {response.text[:500]}"
+            )
+        payload: dict = response.json()  # типизация ответа на совести вызывающего метода
+        return payload
 
     def _check_dims(self, embeddings: list[list[float]], expected_count: int) -> None:
         """Проверяет, что пришло нужное число векторов ожидаемой размерности.

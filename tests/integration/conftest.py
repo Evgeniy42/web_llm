@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.configuration.application_factory import create_app
 from app.configuration.settings import Settings
+from app.data_access_layer.repositories.mock_llm import MockLLM
 from tests.config import IntegrationTestSettings
-from tests.resources.mocks import MockKeycloakClient
+from tests.resources.mocks import FakeEmbeddingClient, FakeQdrantStore, MockKeycloakClient
 
 # На Windows psycopg async требует SelectorEventLoop вместо ProactorEventLoop
 if sys.platform == "win32":
@@ -78,7 +79,18 @@ def app(test_settings, keycloak_mock):
         # Секрет обязателен (дефолта в Settings нет); Keycloak в тестах заменён моком
         keycloak_client_secret="integration-test-secret",
     )
-    application = create_app(settings, keycloak_client=keycloak_mock)
+    # LLM заменена моком: интеграционные тесты проверяют API + БД,
+    # внешний AItunnel подменяется контрактно-совместимой заглушкой.
+    # Этап 7: чат идёт по полному пайплайну «поиск -> промпт -> LLM»,
+    # поэтому вместе с LLM мокаются эмбеддинг-клиент и Qdrant —
+    # без живого стека (llama-server, qdrant) в интеграционных тестах.
+    application = create_app(
+        settings,
+        keycloak_client=keycloak_mock,
+        llm_client=MockLLM(),
+        embedding_client=FakeEmbeddingClient(),
+        vector_store=FakeQdrantStore(),
+    )
     yield application
 
 

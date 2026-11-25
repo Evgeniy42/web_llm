@@ -22,6 +22,9 @@ def test_settings():
         db_port=5432,
         # Секрет обязателен (дефолта в Settings нет)
         keycloak_client_secret="unit-test-secret",
+        # Заглушка ключа LLM: без неё create_app упадёт при сборке
+        # AItunnelLLM (клиент требует непустой ключ ещё в конструкторе)
+        llm_api_key="unit-test-key",
     )
 
 

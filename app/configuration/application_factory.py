@@ -11,13 +11,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
-from app.application_layer.contracts.embedding_protocol import EmbeddingClientProtocol
-from app.application_layer.contracts.keycloak_protocol import KeycloakClientProtocol
+from app.application_layer.contracts.client_contracts.docling_protocol import DoclingClientProtocol
+from app.application_layer.contracts.client_contracts.embedding_protocol import EmbeddingClientProtocol
+from app.application_layer.contracts.client_contracts.keycloak_protocol import KeycloakClientProtocol
+from app.application_layer.contracts.client_contracts.llm_protocol import LLMProtocol
+from app.application_layer.contracts.client_contracts.qdrant_protocol import QdrantProtocol
 from app.configuration.container import AppProvider
 from app.configuration.database import DatabaseManager
 from app.configuration.settings import Settings
-from app.data_access_layer.embedding_client import EmbeddingClient
-from app.data_access_layer.keycloak_client import KeycloakClient
+from app.data_access_layer.clients.docling_client import DoclingClient
+from app.data_access_layer.clients.embedding_client import EmbeddingClient
+from app.data_access_layer.clients.keycloak_client import KeycloakClient
+from app.data_access_layer.clients.llm_client import AItunnelLLM
+from app.data_access_layer.clients.qdrant_store import QdrantStore
 from app.presentation_layer.handlers.http_exception_handlers import setup_exception_handlers
 
 logger = logging.getLogger(__name__)
@@ -54,6 +60,9 @@ def create_app(
     settings: Settings | None = None,
     keycloak_client: KeycloakClientProtocol | None = None,
     embedding_client: EmbeddingClientProtocol | None = None,
+    vector_store: QdrantProtocol | None = None,
+    docling_client: DoclingClientProtocol | None = None,
+    llm_client: LLMProtocol | None = None,
 ) -> FastAPI:
     if settings is None:
         settings = Settings()
@@ -74,6 +83,20 @@ def create_app(
             model=settings.embedding_model,
             expected_dim=settings.embedding_dim,
         )
+    if vector_store is None:
+        vector_store = QdrantStore(
+            url=settings.qdrant_url,
+            collection=settings.qdrant_collection,
+            vector_size=settings.embedding_dim,
+        )
+    if docling_client is None:
+        docling_client = DoclingClient(base_url=settings.docling_service_url)
+    if llm_client is None:
+        llm_client = AItunnelLLM(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -83,11 +106,17 @@ def create_app(
                 run_migrations(settings)
             async with db_manager.engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
+            # Коллекция чанков должна существовать до первой записи;
+            # создаём при старте, чтобы падать быстро, если Qdrant недоступен
+            await vector_store.ensure_collection()
             yield
         finally:
             await db_manager.dispose()
             await keycloak_client.close()
             await embedding_client.close()
+            await vector_store.close()
+            await docling_client.close()
+            await llm_client.close()
 
     app = FastAPI(title="Web LLM", lifespan=lifespan)
 
@@ -116,6 +145,9 @@ def create_app(
             DatabaseManager: db_manager,
             KeycloakClientProtocol: keycloak_client,
             EmbeddingClientProtocol: embedding_client,
+            QdrantProtocol: vector_store,
+            DoclingClientProtocol: docling_client,
+            LLMProtocol: llm_client,
         },
     )
     setup_dishka(container, app)

@@ -1,10 +1,19 @@
 import random
+from typing import ClassVar
+
+from app.application_layer.contracts.client_contracts.llm_protocol import LLMProtocol
 
 
-class MockLLM:
-    """Заглушка LLM: возвращает один из 10 случайных ответов."""
+class MockLLM(LLMProtocol):
+    """Заглушка LLM: возвращает один из 10 случайных ответов.
 
-    RESPONSES: list[str] = [
+    Снята с продакшен-сборки при переходе на AItunnel (этап 6);
+    живёт дальше как контрактно-совместимый фейк для тестов.
+    Явное наследование LLMProtocol — заодно статическая проверка
+    соответствия контракту (mypy).
+    """
+
+    RESPONSES: ClassVar[list[str]] = [
         "Интересный вопрос! Давайте разберёмся.",
         "Я понимаю, о чём вы говорите.",
         "Это хорошая тема для обсуждения.",
@@ -17,5 +26,8 @@ class MockLLM:
         "Спасибо за ваше сообщение!",
     ]
 
-    def generate_response(self, message: str) -> str:
+    async def generate_response(self, message: str, system: str | None = None) -> str:
         return random.choice(self.RESPONSES)
+
+    async def close(self) -> None:
+        pass

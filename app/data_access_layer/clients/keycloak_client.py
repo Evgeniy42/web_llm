@@ -6,7 +6,7 @@ import jwt
 
 from app.across_layers.entities.token_info import TokenInfo
 from app.across_layers.entities.token_payload import TokenPayload
-from app.application_layer.contracts.keycloak_protocol import (
+from app.application_layer.contracts.client_contracts.keycloak_protocol import (
     KeycloakClientProtocol,
     KeycloakError,
     KeycloakInvalidCredentialsError,

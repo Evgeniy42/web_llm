@@ -9,12 +9,14 @@ from app.across_layers.entities.token_info import TokenInfo
 from app.across_layers.entities.token_payload import TokenPayload
 from app.across_layers.entities.user_entity import UserEntity
 from app.across_layers.roles import ROLE_USER
-from app.application_layer.contracts.keycloak_protocol import (
+from app.application_layer.contracts.client_contracts.embedding_protocol import EmbeddingClientProtocol
+from app.application_layer.contracts.client_contracts.keycloak_protocol import (
     KeycloakClientProtocol,
     KeycloakError,
     KeycloakInvalidCredentialsError,
     KeycloakInvalidTokenError,
 )
+from app.application_layer.contracts.client_contracts.qdrant_protocol import QdrantProtocol
 
 # Повторяющиеся тестовые значения
 USER_ID = 1
@@ -56,6 +58,58 @@ def make_code_challenge(code_verifier: str) -> str:
     """PKCE-челлендж S256 из verifier'а — та же формула, что в user_router."""
     digest = hashlib.sha256(code_verifier.encode()).digest()
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
+class FakeEmbeddingClient(EmbeddingClientProtocol):
+    """Заглушка embedding-сервиса: векторизация и токенайзер без сети.
+
+    Интеграционные тесты API проверяют HTTP-слой и БД; llama-server
+    в них не участвует. Все тексты кодируются одним и тем же вектором —
+    для тестов чата достаточно, что контракт соблюдён.
+    """
+
+    async def embed_one(self, text: str) -> list[float]:
+        return [1.0] + [0.0] * 1023
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0] + [0.0] * 1023 for _ in texts]
+
+    async def tokenize(self, text: str) -> list[int]:
+        return text.split()
+
+    async def detokenize(self, tokens: list[int]) -> str:
+        return " ".join(tokens)
+
+    async def close(self) -> None:
+        pass
+
+
+class FakeQdrantStore(QdrantProtocol):
+    """Заглушка векторного хранилища: поиск всегда возвращает пустой контекст.
+
+    Интеграционные тесты чата (этап 7) идут по полному пайплайну
+    «поиск -> промпт -> LLM»; Qdrant подменяется, чтобы не тянуть
+    живой стек: промпт собирается с заглушкой «фрагменты не найдены»,
+    LLM уже заменена MockLLM в conftest.
+    """
+
+    async def ensure_collection(self) -> None:
+        pass
+
+    async def upsert_chunks(self, chunks, vectors) -> list[str]:
+        return []
+
+    async def count_chunks(self, doc_id: str) -> int:
+        return 0
+
+    async def delete_chunks_from(self, doc_id: str, from_index: int) -> None:
+        pass
+
+    async def search(self, query_vector, top_k, doc_id=None):
+        return []
+
+    async def close(self) -> None:
+        pass
 
 
 class MockKeycloakClient(KeycloakClientProtocol):

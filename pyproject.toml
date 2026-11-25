@@ -16,6 +16,12 @@ dependencies = [
     "httpx>=0.27.0,<0.29.0",
     # Проверка подписи и срока JWT доступа Keycloak (RS256 по JWKS)
     "pyjwt[crypto]>=2.8.0,<3.0.0",
+    # Асинхронный клиент векторного хранилища Qdrant (RAG)
+    "qdrant-client>=1.12.0,<2.0.0",
+    # Multipart-формы: приём файлов в FastAPI (UploadFile)
+    "python-multipart>=0.0.9,<1.0.0",
+    # Генеративная модель через OpenAI-совместимый API (AItunnel, этап 6)
+    "openai>=1.0.0,<4.0.0",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +54,13 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
 python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
+ignore_missing_imports = true
+
+# Стабы numpy (подтягивается через qdrant-client) используют синтаксис Python 3.12+;
+# проверять типы чужих библиотек не нужно — только наш код
+[[tool.mypy.overrides]]
+module = ["numpy.*", "qdrant_client.*", "grpc.*"]
+follow_imports = "skip"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -7,12 +7,12 @@ from app.across_layers.entities.token_info import TokenInfo
 from app.across_layers.entities.token_payload import TokenPayload
 from app.across_layers.entities.user_entity import UserEntity
 from app.across_layers.roles import ROLE_USER, ROLE_VIP_USER
-from app.application_layer.contracts.keycloak_protocol import (
+from app.application_layer.contracts.client_contracts.keycloak_protocol import (
     KeycloakClientProtocol,
     KeycloakInvalidCredentialsError,
     KeycloakInvalidTokenError,
 )
-from app.application_layer.contracts.user_repository_protocol import UserRepositoryProtocol
+from app.application_layer.contracts.service_contracts.user_repository_protocol import UserRepositoryProtocol
 
 logger = logging.getLogger(__name__)
 
